@@ -230,6 +230,23 @@ if IS_WIN:
     _user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
     _user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                      ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    class WNDCLASSEXW(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.UINT), ("style", wintypes.UINT),
+                    ("lpfnWndProc", ctypes.c_void_p), ("cbClsExtra", ctypes.c_int),
+                    ("cbWndExtra", ctypes.c_int), ("hInstance", wintypes.HINSTANCE),
+                    ("hIcon", wintypes.HICON), ("hCursor", wintypes.HANDLE),
+                    ("hbrBackground", wintypes.HBRUSH), ("lpszMenuName", wintypes.LPCWSTR),
+                    ("lpszClassName", wintypes.LPCWSTR), ("hIconSm", wintypes.HICON)]
+
+    _user32.RegisterClassExW.argtypes = [ctypes.POINTER(WNDCLASSEXW)]
+    _user32.RegisterClassExW.restype = wintypes.ATOM
+    _user32.CreateWindowExW.argtypes = [
+        wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU,
+        wintypes.HINSTANCE, wintypes.LPVOID]
+    _user32.CreateWindowExW.restype = wintypes.HWND
+    _kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    _kernel32.GetModuleHandleW.restype = wintypes.HMODULE
     _gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
     _gdi32.CreateCompatibleDC.restype = wintypes.HDC
     _gdi32.CreateDIBSection.argtypes = [wintypes.HDC, ctypes.POINTER(BITMAPINFOHEADER),
@@ -279,6 +296,7 @@ if IS_WIN:
                                  ctypes.c_void_p, ctypes.POINTER(BITMAPINFO), wintypes.UINT]
 
 GWL_EXSTYLE = -20
+WS_POPUP, WS_EX_TOPMOST = 0x80000000, 0x00000008
 WS_EX_LAYERED, WS_EX_TRANSPARENT = 0x00080000, 0x00000020
 WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW = 0x08000000, 0x00000080
 
@@ -290,12 +308,28 @@ def toplevel_hwnd(win: tk.Toplevel):
     return int(win.wm_frame(), 16)
 
 
-def make_layered(hwnd) -> None:
-    style = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
-    _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT
-                           | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
-    if not _user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_LAYERED:
-        raise OSError(f"não deu para deixar a janela {hwnd:#x} transparente")
+_WNDCLASS = None
+
+
+def create_layered_window():
+    """Cria uma janela popup nativa, transparente a cliques e que não rouba o foco."""
+    global _WNDCLASS
+    hinst = _kernel32.GetModuleHandleW(None)
+    if _WNDCLASS is None:
+        wc = WNDCLASSEXW()
+        wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
+        wc.lpfnWndProc = ctypes.cast(_user32.DefWindowProcW, ctypes.c_void_p).value
+        wc.hInstance = hinst
+        wc.lpszClassName = "MiraWheel"
+        if not _user32.RegisterClassExW(ctypes.byref(wc)) and ctypes.get_last_error() != 1410:
+            raise ctypes.WinError(ctypes.get_last_error())
+        _WNDCLASS = wc  # precisa continuar vivo
+    hwnd = _user32.CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        "MiraWheel", "Mira", WS_POPUP, -32000, -32000, 1, 1, None, None, hinst, None)
+    if not hwnd:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return hwnd
 
 
 def update_layered(hwnd, img: Image.Image, x: int, y: int) -> None:
@@ -680,9 +714,6 @@ class Wheel:
 
     def __init__(self, app: "App"):
         self.app = app
-        self.win = tk.Toplevel(app.root)
-        self.win.overrideredirect(True)
-        self.win.attributes("-topmost", True)
         self.visible = False
         self.stack: list[Layer] = []
         self.selected: int | None = None
@@ -696,13 +727,13 @@ class Wheel:
         self._last = None
         self.hwnd = None
         if IS_WIN:
-            # janela "layered": a imagem neon é mostrada com transparência por pixel
-            self.win.geometry("1x1+-32000+-32000")
-            self.win.update()
-            self.hwnd = toplevel_hwnd(self.win)
-            make_layered(self.hwnd)
-            _user32.ShowWindow(self.hwnd, 0)  # SW_HIDE
+            # janela nativa "layered": a imagem neon aparece com transparência por pixel
+            # (o Windows não aceita UpdateLayeredWindow numa janela do Tk)
+            self.hwnd = create_layered_window()
         else:
+            self.win = tk.Toplevel(app.root)
+            self.win.overrideredirect(True)
+            self.win.attributes("-topmost", True)
             self.win.withdraw()
             self.canvas = tk.Canvas(self.win, highlightthickness=0, bd=0,
                                     bg=app.cfg["background"])
@@ -783,13 +814,13 @@ class Wheel:
             self.win.geometry(f"{self.size}x{self.size}+{self.origin[0]}+{self.origin[1]}")
             self.win.deiconify()
             self.win.lift()
-        self._job = self.win.after(self.FRAME_MS, self._tick)
+        self._job = self.app.root.after(self.FRAME_MS, self._tick)
 
     def hide(self) -> None:
         self.visible = False
         self.stack = []
         if self._job:
-            self.win.after_cancel(self._job)
+            self.app.root.after_cancel(self._job)
             self._job = None
         if IS_WIN:
             _user32.ShowWindow(self.hwnd, 0)
@@ -854,7 +885,7 @@ class Wheel:
             self._render(progress)
         except Exception:
             log.exception("falha ao desenhar a roda")
-        self._job = self.win.after(self.FRAME_MS, self._tick)
+        self._job = self.app.root.after(self.FRAME_MS, self._tick)
 
 
 # --------------------------------------------------------------------------
