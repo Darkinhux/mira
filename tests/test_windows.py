@@ -151,11 +151,14 @@ def test_print_screen_opens_snipper(app, monkeypatch):
     pump(app, 0.3)
     ImageGrab.grab().save(ARTIFACTS / "recorte_no_windows.png")
     got = []
-    s.on_done = lambda img, action: got.append((img, action))
+    app_done = s.on_done
+    # guarda o resultado e avisa o app que o recorte terminou (como no uso normal)
+    s.on_done = lambda img, action: (got.append((img, action)), app_done(None, None))
     s.finish("copy")
     img, action = got[0]
     assert action == "copy" and img.size == (300, 200)
     assert not app.wheel.visible
+    assert not app.snipping
 
 
 # ---------------------------------------------------------------- Ctrl+C e perfis
