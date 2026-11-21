@@ -20,7 +20,8 @@
         "steam",
         "epic",
         "riot"
-      ]
+      ],
+      "id": "jogos"
     },
     {
       "name": "Steam",
@@ -57,28 +58,33 @@
           "type": "open",
           "target": "steam://open/downloads"
         }
-      ]
+      ],
+      "id": "steam"
     },
     {
       "name": "Discord",
       "icon": "💬",
       "type": "open",
-      "target": "discord://"
+      "target": "discord://",
+      "id": "discord"
     },
     {
       "name": "Recortar",
       "icon": "✂️",
-      "type": "snip"
+      "type": "snip",
+      "id": "recortar"
     },
     {
       "name": "Copiados",
       "icon": "📋",
-      "type": "clipboard"
+      "type": "clipboard",
+      "id": "copiados"
     },
     {
       "name": "Tela inteira",
       "icon": "🖥️",
-      "type": "screenshot"
+      "type": "screenshot",
+      "id": "tela-inteira"
     },
     {
       "name": "Navegador",
@@ -115,7 +121,8 @@
           "type": "open",
           "target": "https://mail.google.com"
         }
-      ]
+      ],
+      "id": "navegador"
     },
     {
       "name": "Arquivos",
@@ -170,7 +177,8 @@
           "type": "folder",
           "path": "C:\\"
         }
-      ]
+      ],
+      "id": "arquivos"
     },
     {
       "name": "Mídia",
@@ -219,7 +227,8 @@
           "keys": "media_previous",
           "stay": true
         }
-      ]
+      ],
+      "id": "midia"
     },
     {
       "name": "Sistema",
@@ -262,7 +271,8 @@
           "type": "command",
           "command": "shutdown /a"
         }
-      ]
+      ],
+      "id": "sistema"
     }
   ],
   "clipboard_history": true,
@@ -397,7 +407,8 @@
               "keys": "media_previous",
               "stay": true
             }
-          ]
+          ],
+          "id": "midia"
         },
         {
           "name": "Copiados",
@@ -411,5 +422,22 @@
         }
       ]
     }
+  ],
+  "update_check": true,
+  "_seen_items": [
+    "jogos",
+    "steam",
+    "discord",
+    "recortar",
+    "copiados",
+    "tela-inteira",
+    "navegador",
+    "arquivos",
+    "midia",
+    "sistema"
+  ],
+  "_seen_profiles": [
+    "navegador",
+    "valorant"
   ]
 }

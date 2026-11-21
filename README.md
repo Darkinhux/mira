@@ -48,6 +48,19 @@ O `config.json` é criado ao lado do `.exe` na primeira vez.
 
 Para gerar o `.exe` você mesmo: dois cliques em **`criar_exe.bat`**.
 
+### Atualizações
+
+O `Mira.exe` procura versão nova sozinho (ao abrir e a cada 6 horas). Quando encontra, avisa:
+**clique no aviso** (ou no ícone perto do relógio → *Atualizar*). Ele baixa, confere o arquivo
+(tamanho e SHA-256), troca o `.exe` e reabre, sem perder nada.
+
+- O seu `config.json` é **mantido**. As novidades da versão (itens novos da roda, perfis, opções)
+  são acrescentadas sem mexer no que você personalizou, e o Mira avisa o que entrou. Se você
+  apagar um item novo, ele não volta. Antes de mudar o arquivo, o Mira guarda uma cópia em
+  `config.antes-da-atualizacao.json`.
+- O Mira só conversa com `api.github.com` para isso. Para desligar: `"update_check": false`
+  (ainda dá para procurar na mão pelo ícone perto do relógio).
+
 ### Com Python
 
 1. Instale o [Python 3.11 ou mais novo](https://www.python.org/downloads/) e marque
@@ -187,6 +200,10 @@ Outras opções do `config.json` (troque as cores para criar seu tema — ex.: `
 | `clipboard_max`     | `25`                | Quantos itens o histórico guarda              |
 | `clipboard_save`    | `false`             | Salva os textos copiados em `copiados.json`   |
 | `profiles`          | Navegador, Valorant | Rodas por programa (veja acima)               |
+| `update_check`      | `true`              | Procura versão nova do `Mira.exe` sozinho     |
+
+As chaves `_seen_items` e `_seen_profiles` são do próprio Mira (guardam quais novidades já
+foram oferecidas). Pode deixar como estão.
 | `screenshot_folder` | `{pictures}/Mira`   | Onde os prints são salvos                     |
 
 ## Problemas comuns

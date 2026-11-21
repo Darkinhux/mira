@@ -6,3 +6,4 @@ dist/
 *.spec
 tests/artifacts/
 .pytest_cache/
+_versao.py

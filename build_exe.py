@@ -2,6 +2,7 @@
 
 Uso:  python build_exe.py      (ou dois cliques em criar_exe.bat)
 """
+import os
 from pathlib import Path
 
 import PyInstaller.__main__
@@ -11,6 +12,11 @@ import neon
 ROOT = Path(__file__).resolve().parent
 BUILD = ROOT / "build"
 BUILD.mkdir(exist_ok=True)
+
+# número do build (o CI usa o mesmo número na Release) para a atualização automática
+(ROOT / "_versao.py").write_text(
+    f"BUILD = {int(os.environ.get('GITHUB_RUN_NUMBER', '0'))}\n"
+    f"COMMIT = {os.environ.get('GITHUB_SHA', '')!r}\n", encoding="utf-8")
 
 icon = BUILD / "mira.ico"
 neon.tray_image("#00f0ff", "#ff2a6d", 256).save(

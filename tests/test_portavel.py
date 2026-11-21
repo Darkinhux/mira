@@ -149,3 +149,99 @@ def test_clipboard_history_save_only_when_enabled(tmp_path):
     assert [e.text for e in again.entries] == ["guardado"]  # imagens não vão pro disco
     copiados.ClipboardHistory().add_text("só memória")
     assert path.read_text(encoding="utf-8").count("só memória") == 0
+
+
+# ---------------------------------------------------------------- migração e atualização
+import atualizar  # noqa: E402
+import migracao  # noqa: E402
+
+V1_CONFIG = {  # config.json da primeira versão do Mira
+    "trigger": "mouse5", "radius": 170, "accent": "#00ff00",
+    "items": [
+        {"name": "Steam", "icon": "🎮", "type": "open", "target": "steam://open/main"},
+        {"name": "Discord", "icon": "💬", "type": "open", "target": "discord://"},
+        {"name": "Recortar", "icon": "✂️", "type": "snip"},
+        {"name": "Tela inteira", "icon": "🖥️", "type": "screenshot"},
+        {"name": "Navegador", "icon": "🌐", "type": "open", "target": "https://www.google.com"},
+        {"name": "Arquivos", "icon": "📁", "type": "open", "target": "explorer.exe"},
+        {"name": "Meu jogo", "icon": "🕹️", "type": "open", "target": "C:\\\\jogo.exe"},
+    ],
+}
+
+
+def test_migration_keeps_custom_and_adds_news():
+    defaults = load_cfg()
+    new, added, notes = migracao.migrate(V1_CONFIG, defaults)
+    names = [i["name"] for i in new["items"]]
+    assert new["trigger"] == "mouse5" and new["accent"] == "#00ff00"   # personalizado fica
+    assert "Meu jogo" in names                                         # item próprio fica
+    assert next(i for i in new["items"] if i["name"] == "Navegador")["type"] == "open"
+    for news in ("Jogos", "Copiados", "Mídia", "Sistema"):
+        assert news in names and news in added
+    assert names.index("Copiados") == names.index("Recortar") + 1      # no lugar certo
+    assert names[0] == "Jogos"
+    assert {p["name"] for p in new["profiles"]} == {"Navegador", "Valorant"}
+    assert "clipboard_history" in new and "update_check" in new
+    assert len(names) <= 12 and not notes
+
+    again, added2, _ = migracao.migrate(new, defaults)
+    assert again == new and not added2                                 # nada de novo
+
+    new["items"] = [i for i in new["items"] if i["name"] != "Jogos"]   # apagou de propósito
+    new["profiles"] = []
+    third, added3, _ = migracao.migrate(new, defaults)
+    assert "Jogos" not in [i["name"] for i in third["items"]] and not added3
+    assert third["profiles"] == []
+
+
+def test_migration_full_wheel_warns():
+    defaults = load_cfg()
+    full = {"items": [{"name": f"Item {n}", "type": "snip"} for n in range(12)]}
+    new, added, notes = migracao.migrate(full, defaults)
+    assert len(new["items"]) == 12 and notes
+
+
+def _fake_release(tmp_path, payload: bytes):
+    import hashlib
+    exe = tmp_path / "release.exe"
+    exe.write_bytes(payload)
+    api = tmp_path / "latest.json"
+    api.write_text(json.dumps({
+        "tag_name": "mira-v42", "html_url": "https://example/r",
+        "assets": [{"name": "Mira.exe", "size": len(payload),
+                    "browser_download_url": exe.as_uri(),
+                    "digest": "sha256:" + hashlib.sha256(payload).hexdigest()}]}))
+    return atualizar.latest_release(api.as_uri())
+
+
+def test_update_check_and_download(tmp_path):
+    info = _fake_release(tmp_path, b"MZ" + b"x" * 5000)
+    assert info["build"] == 42 and info["size"] == 5002
+    assert atualizar.is_newer(info, current=7) and not atualizar.is_newer(info, current=42)
+    assert not atualizar.is_newer(info, current=0)  # versão de desenvolvimento não atualiza
+
+    dest = tmp_path / "Mira.new.exe"
+    import pytest
+    with pytest.raises(ValueError):  # só aceita download das Releases do próprio repo
+        atualizar.download(info, dest)
+    atualizar.download(info, dest, allow_any_url=True)
+    assert dest.read_bytes().startswith(b"MZ")
+
+    bad = dict(info, sha256="0" * 64)
+    with pytest.raises(ValueError, match="SHA-256"):
+        atualizar.download(bad, tmp_path / "x.exe", allow_any_url=True)
+    assert not (tmp_path / "x.exe").exists()
+
+    not_exe = _fake_release(tmp_path, b"<html>erro</html>")
+    with pytest.raises(ValueError, match="não é um .exe"):
+        atualizar.download(not_exe, tmp_path / "y.exe", allow_any_url=True)
+
+
+def test_swap_exe(tmp_path):
+    cur, new = tmp_path / "Mira.exe", tmp_path / "Mira.new.exe"
+    cur.write_bytes(b"MZ velho")
+    new.write_bytes(b"MZ novo")
+    atualizar.swap_exe(cur, new)
+    assert cur.read_bytes() == b"MZ novo" and (tmp_path / "Mira.old.exe").exists()
+    atualizar.cleanup_old(cur)
+    assert not (tmp_path / "Mira.old.exe").exists() and cur.exists()

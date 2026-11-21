@@ -36,6 +36,7 @@ jobs:
           Stop-Process -Id $p.Id -Force
           Get-Content dist\mira.log
           if (-not (Select-String -Path dist\mira.log -Pattern "Mira iniciado" -Quiet)) { exit 1 }
+          if (-not (Select-String -Path dist\mira.log -Pattern "build $env:GITHUB_RUN_NUMBER\)" -Quiet)) { Write-Host "o .exe não sabe o número do build"; exit 1 }
 
       - name: Prints dos testes
         if: always()

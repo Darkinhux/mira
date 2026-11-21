@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 import tkinter as tk
+import unicodedata
 import uuid
 from datetime import datetime
 from functools import lru_cache
@@ -47,8 +48,10 @@ import threading  # noqa: E402
 from PIL import Image, ImageChops, ImageGrab, ImageTk  # noqa: E402
 from pynput import keyboard, mouse  # noqa: E402
 
+import atualizar  # noqa: E402
 import copiados  # noqa: E402
 import jogos  # noqa: E402
+import migracao  # noqa: E402
 import neon  # noqa: E402
 import recorte  # noqa: E402
 
@@ -170,6 +173,11 @@ DEFAULT_CONFIG.update({
     ],
 })
 
+DEFAULT_CONFIG["update_check"] = True  # procura versão nova nas Releases do GitHub
+for _it in DEFAULT_CONFIG["items"]:  # id fixo: a migração reconhece o item mesmo renomeado
+    _it["id"] = unicodedata.normalize("NFKD", _it["name"]).encode("ascii", "ignore") \
+        .decode().lower().replace(" ", "-")
+
 # trigger -> (tipo, número do XBUTTON)
 TRIGGERS = {
     "mouse4": ("x", 1),
@@ -187,14 +195,26 @@ WM_XBUTTONDOWN, WM_XBUTTONUP = 0x020B, 0x020C
 # --------------------------------------------------------------------------
 # Configuração
 # --------------------------------------------------------------------------
+def _write_config(data: dict) -> None:
+    CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
 def load_config() -> dict:
     if not CONFIG_PATH.exists():
-        CONFIG_PATH.write_text(
-            json.dumps(DEFAULT_CONFIG, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        fresh, _, _ = migracao.migrate(DEFAULT_CONFIG, DEFAULT_CONFIG)
+        _write_config(fresh)
     with CONFIG_PATH.open(encoding="utf-8") as f:
         user = json.load(f)
+    # novidades desta versão entram no config sem mexer no que foi personalizado
+    migrated, added, notes = migracao.migrate(user, DEFAULT_CONFIG)
+    if migrated != user:
+        backup = CONFIG_PATH.with_name("config.antes-da-atualizacao.json")
+        backup.write_text(json.dumps(user, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_config(migrated)
+        log.info("config atualizado: %s %s", added, notes)
+    user = migrated
     cfg = {**DEFAULT_CONFIG, **user}
+    cfg["_migration"] = (added, notes)
     if cfg["trigger"] not in TRIGGERS:
         raise ValueError(f"\"trigger\" deve ser um de: {', '.join(TRIGGERS)}")
     cfg["items"] = _check_items(cfg.get("items", []), "\"items\"", minimum=2)
@@ -1011,6 +1031,8 @@ class App:
         self.ignore_up = False
         self._swallow: set[int] = set()
         self.tray = None
+        self.update_info = None
+        self.updating = False
         self._init_clipboard()
         self._start_listeners()
         self._start_tray()
@@ -1088,7 +1110,18 @@ class App:
         if IS_WIN:
             items.append(pystray.MenuItem("Iniciar com o Windows", put("toggle_startup"),
                                           checked=lambda item: startup_enabled()))
-        items += [pystray.Menu.SEPARATOR, pystray.MenuItem("Sair", put("quit"))]
+        items += [
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                lambda item: (f"⬆ Atualizar para o build {self.update_info['build']}"
+                              if self.update_info else ""),
+                put("start_update"), visible=lambda item: self.update_info is not None),
+            pystray.MenuItem("Procurar atualização", put("check_update")),
+            pystray.MenuItem(f"Mira build {atualizar.BUILD}" if atualizar.BUILD
+                             else "Mira (versão de desenvolvimento)", None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Sair", put("quit")),
+        ]
         self.tray = pystray.Icon(APP_NAME, neon.tray_image(self.cfg["neon"], self.cfg["accent"]),
                                  f"{APP_NAME} — roda de atalhos", pystray.Menu(*items))
         self.tray.run_detached()
@@ -1165,6 +1198,17 @@ class App:
                 self.tray.update_menu()
         elif ev == "quit":
             self.quit()
+        elif ev == "check_update":
+            self.check_update(manual=True)
+        elif ev == "update_checked":
+            self._on_update_checked(*arg)
+        elif ev == "start_update":
+            self.start_update()
+        elif ev == "update_ready":
+            self._finish_update()
+        elif ev == "update_error":
+            self.updating = False
+            self.toast(f"Atualização falhou: {arg}", error=True, ms=6000)
 
     # --- histórico do Ctrl+C ---
     def _init_clipboard(self):
@@ -1227,6 +1271,7 @@ class App:
         self.clips.entries = old or self.clips.entries
         self.wheel.rebuild()
         self.toast(f"Atalhos recarregados ({len(self.cfg['items'])} itens)")
+        self._announce_migration()
 
     def activate(self, item: dict):
         """Abre a subcamada do item ou executa a ação dele."""
@@ -1399,22 +1444,114 @@ class App:
             self.root.destroy()
 
     def run(self):
-        log.info("Mira iniciado (gatilho: %s)", self.cfg["trigger"])
+        log.info("Mira iniciado (gatilho: %s, build %s)", self.cfg["trigger"], atualizar.BUILD)
         self.toast(f"Mira ativo — segure o {self.cfg['trigger'].replace('mouse', 'Mouse ')} "
                    "para abrir a roda")
+        self._announce_migration()
+        if FROZEN:
+            atualizar.cleanup_old(Path(sys.executable))
+        if self.cfg.get("update_check", True):
+            self.root.after(8000, self.check_update)
         self.root.mainloop()
+
+    def _announce_migration(self):
+        added, notes = self.cfg.get("_migration", ([], []))
+        if added:
+            self.root.after(2800, lambda: self.toast(
+                "Novidades na roda: " + ", ".join(added), ms=7000))
+        if notes:
+            self.root.after(2800, lambda: self.toast("; ".join(notes), error=True, ms=7000))
+
+    # --- atualização automática ---
+    def check_update(self, manual: bool = False):
+        if self.cfg.get("update_check", True) and not manual:
+            self.root.after(6 * 3600 * 1000, self.check_update)  # de novo em 6 horas
+        if not FROZEN:
+            if manual:
+                self.toast("A atualização automática só funciona no Mira.exe.")
+            return
+
+        def worker():
+            try:
+                info = atualizar.latest_release()
+                self.events.put(("update_checked", (info, manual)))
+            except Exception as e:
+                log.info("não deu para procurar atualização: %s", e)
+                if manual:
+                    self.events.put(("update_error", f"sem conexão com o GitHub ({e})"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_checked(self, info, manual):
+        if atualizar.is_newer(info):
+            self.update_info = info
+            if self.tray:
+                self.tray.update_menu()
+            self.toast(f"Nova versão do Mira (build {info['build']}). Clique aqui para atualizar.",
+                       ms=15000, on_click=self.start_update)
+        elif manual:
+            self.toast(f"Você já está na versão mais nova (build {atualizar.BUILD}).")
+
+    def start_update(self):
+        if self.updating or not self.update_info:
+            return
+        self.updating = True
+        info = self.update_info
+        exe = Path(sys.executable)
+        self.toast(f"Baixando o Mira build {info['build']}…", ms=4000)
+
+        def worker():
+            try:
+                atualizar.download(info, exe.with_name(exe.stem + ".new" + exe.suffix))
+                self.events.put(("update_ready", None))
+            except Exception as e:
+                log.exception("falha ao baixar a atualização")
+                self.events.put(("update_error", str(e)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_update(self):
+        exe = Path(sys.executable)
+        try:
+            atualizar.swap_exe(exe, exe.with_name(exe.stem + ".new" + exe.suffix))
+        except OSError as e:
+            self.updating = False
+            self.toast(f"Não deu para trocar o Mira.exe: {e}", error=True, ms=6000)
+            return
+        log.info("atualizado para o build %s; reabrindo", self.update_info["build"])
+        release_single_instance()
+        subprocess.Popen([str(exe), "--updated"], cwd=str(exe.parent))
+        self.quit()
+
+
+_MUTEX = None
+
+
+def release_single_instance() -> None:
+    """Solta a trava de "um Mira só" (usado ao reabrir depois de atualizar)."""
+    global _MUTEX
+    if IS_WIN and _MUTEX:
+        _kernel32.CloseHandle(_MUTEX)
+        _MUTEX = None
 
 
 def main():
+    global _MUTEX
     if IS_WIN:
         _ole32.CoInitialize(None)  # necessário para os ícones de arquivos
-        mutex = _kernel32.CreateMutexW(None, False, "Local\\MiraRodaDeAtalhos")
-        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+        # logo depois de uma atualização, o Mira antigo ainda pode estar fechando
+        for _ in range(25 if "--updated" in sys.argv else 1):
+            _MUTEX = _kernel32.CreateMutexW(None, False, "Local\\MiraRodaDeAtalhos")
+            if ctypes.get_last_error() != 183:  # ERROR_ALREADY_EXISTS
+                break
+            _kernel32.CloseHandle(_MUTEX)
+            _MUTEX = None
+            time.sleep(0.2)
+        else:
             r = tk.Tk()
             r.withdraw()
             messagebox.showinfo(APP_NAME, "O Mira já está rodando (veja o ícone perto do relógio).")
             return
-        _ = mutex
     try:
         app = App()
     except Exception as e:
