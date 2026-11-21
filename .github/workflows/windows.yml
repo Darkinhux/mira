@@ -2,8 +2,10 @@ name: Windows
 
 on:
   push:
-  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: write  # para publicar o Mira.exe nas Releases
 
 jobs:
   testar-e-compilar:
@@ -47,3 +49,17 @@ jobs:
         with:
           name: Mira-exe
           path: dist/Mira.exe
+
+      - name: Publicar o Mira.exe nas Releases (link direto)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mira-v${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Mira (build ${{ github.run_number }})
+          make_latest: "true"
+          body: |
+            Baixe o **Mira.exe** abaixo, coloque numa pasta só dele e abra.
+            Se o Windows avisar, clique em "Mais informações" → "Executar assim mesmo".
+
+            Commit: ${{ github.sha }}
+          files: dist/Mira.exe

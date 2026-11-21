@@ -38,9 +38,9 @@ abre a pasta no Explorador, e se tiver muita coisa aparece **Mais (N)** para a p
 
 ### Jeito fácil: Mira.exe
 
-Baixe o `Mira.exe` na aba **Actions** do GitHub (último resultado verde → *Artifacts* →
-**Mira-exe**), coloque numa pasta e abra. Não precisa instalar nada. O `config.json` é
-criado ao lado do `.exe` na primeira vez.
+**[⬇ Baixar o Mira.exe](https://github.com/Darkinhux/mira/releases/latest/download/Mira.exe)**
+(sempre a versão mais nova). Coloque numa pasta só dele e abra. Não precisa instalar nada.
+O `config.json` é criado ao lado do `.exe` na primeira vez.
 
 > O Windows SmartScreen ou o antivírus podem estranhar um `.exe` novo e sem assinatura.
 > Clique em "Mais informações" → "Executar assim mesmo".
@@ -160,4 +160,5 @@ Outras opções do `config.json` (troque as cores para criar seu tema — ex.: `
 `python -m pytest tests`. No GitHub, a cada mudança, um Windows de verdade roda todos os
 testes: abre a roda e confere a transparência com um print da tela, simula o Mouse 4 e o
 PrtSc, testa os ícones e a área de transferência. Depois ele gera e abre o `Mira.exe`.
-Os prints ficam em *Artifacts* → **prints-dos-testes**.
+Os prints ficam em *Artifacts* → **prints-dos-testes**, e o `.exe` testado é publicado
+nas [Releases](https://github.com/Darkinhux/mira/releases).
