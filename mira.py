@@ -53,6 +53,7 @@ import copiados  # noqa: E402
 import jogos  # noqa: E402
 import migracao  # noqa: E402
 import neon  # noqa: E402
+import ocr  # noqa: E402
 import recorte  # noqa: E402
 
 APP_NAME = "Mira"
@@ -141,6 +142,9 @@ DEFAULT_CONFIG: dict = {
 DEFAULT_CONFIG["items"].insert(
     [i["name"] for i in DEFAULT_CONFIG["items"]].index("Recortar") + 1,
     {"name": "Copiados", "icon": "📋", "type": "clipboard"})
+DEFAULT_CONFIG["items"].insert(
+    [i["name"] for i in DEFAULT_CONFIG["items"]].index("Copiados") + 1,
+    {"name": "Copiar texto", "icon": "🔤", "type": "ocr"})
 DEFAULT_CONFIG.update({
     "clipboard_history": True,
     "clipboard_max": 25,
@@ -367,6 +371,8 @@ if IS_WIN:
     _gdi32.GetDIBits.argtypes = [wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
                                  ctypes.c_void_p, ctypes.POINTER(BITMAPINFO), wintypes.UINT]
 
+    _user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    _user32.GetAsyncKeyState.restype = ctypes.c_short
     _user32.GetForegroundWindow.restype = wintypes.HWND
     _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
@@ -1084,7 +1090,8 @@ class App:
         # PrtSc abre o recorte (e não o recorte do Windows), como no Lightshot
         if data.vkCode == 0x2C and self.cfg.get("print_screen", True):
             if msg in (0x0100, 0x0104):  # WM_KEYDOWN, WM_SYSKEYDOWN
-                self.events.put(("print_screen", None))
+                shift = _user32.GetAsyncKeyState(0x10) & 0x8000  # Shift+PrtSc = copiar texto
+                self.events.put(("ocr_key" if shift else "print_screen", None))
             self.kb_listener.suppress_event()
 
     def _on_key(self, key):
@@ -1198,6 +1205,14 @@ class App:
                 self.tray.update_menu()
         elif ev == "quit":
             self.quit()
+        elif ev == "ocr_done":
+            self._ocr_done(arg)
+        elif ev == "ocr_error":
+            self.toast(f"OCR: {arg}", error=True, ms=6000)
+        elif ev == "ocr_key":
+            if self.wheel.visible:
+                self._close_wheel()
+            self.root.after(60, lambda: self.start_snip(ocr_mode=True))
         elif ev == "check_update":
             self.check_update(manual=True)
         elif ev == "update_checked":
@@ -1335,6 +1350,8 @@ class App:
                 send_keys(item["keys"])
             elif kind == "snip":
                 self.start_snip()
+            elif kind == "ocr":
+                self.start_snip(ocr_mode=True)
             elif kind == "screenshot":
                 img = ImageGrab.grab(all_screens=True) if IS_WIN else ImageGrab.grab()
                 self._deliver(img)
@@ -1346,14 +1363,14 @@ class App:
             log.exception("falha na ação")
             self.toast(f"'{item.get('name')}' falhou: {e}", error=True, ms=4000)
 
-    def start_snip(self):
+    def start_snip(self, ocr_mode: bool = False):
         if self.snipping:
             return
         self.snipping = True
         try:
             shot = ImageGrab.grab(all_screens=True) if IS_WIN else ImageGrab.grab()
             recorte.Snipper(self.root, self.cfg, shot, virtual_screen(self.root),
-                            cursor_pos(self.root), self._snip_done)
+                            cursor_pos(self.root), self._snip_done, ocr_mode=ocr_mode)
         except Exception:
             self.snipping = False
             raise
@@ -1369,8 +1386,34 @@ class App:
                 self._deliver(img)
         elif action == "save":
             self._save_as(img)
+        elif action == "ocr":
+            self.run_ocr(img)
         else:
             self._deliver(img)
+
+    def run_ocr(self, img: Image.Image):
+        self.toast("Lendo o texto…", ms=1800)
+
+        def worker():
+            try:
+                self.events.put(("ocr_done", ocr.extract_text(img)))
+            except ocr.OcrError as e:
+                self.events.put(("ocr_error", str(e)))
+            except Exception as e:
+                log.exception("falha no OCR")
+                self.events.put(("ocr_error", str(e)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _ocr_done(self, text: str):
+        if not text:
+            self.toast("Não achei texto nessa área.", error=True)
+            return
+        if not copiados.write_text(text):
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+        preview = text if len(text) <= 140 else text[:140] + "…"
+        self.toast(f"Texto copiado ({len(text)} caracteres) — é só colar:\n{preview}", ms=5000)
 
     def _save_as(self, img: Image.Image):
         folder = Path(resolve_path(self.cfg["screenshot_folder"]))

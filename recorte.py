@@ -144,9 +144,11 @@ def render(base: Image.Image, annos, off, scale: float, ss: int = 1) -> Image.Im
 # a janela de recorte
 # --------------------------------------------------------------------------
 class Snipper:
-    def __init__(self, root: tk.Misc, cfg: dict, shot: Image.Image, vscreen, cursor, on_done):
+    def __init__(self, root: tk.Misc, cfg: dict, shot: Image.Image, vscreen, cursor, on_done,
+                 ocr_mode: bool = False):
         """on_done(imagem | None, ação) — ação: "copy", "save", "quick" ou None."""
         self.on_done = on_done
+        self.ocr_mode = ocr_mode  # só selecionar: ao soltar, lê o texto da área
         self.neon, self.accent, self.bgc = cfg["neon"], cfg["accent"], cfg["background"]
         vx, vy, vw, vh = vscreen
         self.vw, self.vh = vw, vh
@@ -188,7 +190,9 @@ class Snipper:
         hy = max(40, cy - 70)
         self.cv.create_rectangle(cx - 250, hy - 18, cx + 250, hy + 18, fill="#07070f",
                                  outline=self.neon, tags="hint")
-        self.cv.create_text(cx, hy, text="[ ARRASTE PARA SELECIONAR ]   ESC // CANCELA",
+        hint = ("[ ARRASTE SOBRE O TEXTO ]   ESC // CANCELA" if ocr_mode
+                else "[ ARRASTE PARA SELECIONAR ]   ESC // CANCELA")
+        self.cv.create_text(cx, hy, text=hint,
                             fill=self.neon, font=("Consolas", 12, "bold"), tags="hint")
 
         cv = self.cv
@@ -206,6 +210,7 @@ class Snipper:
         w.bind("<Return>", lambda e: self._key(lambda: self.finish("quick")))
         w.bind("<Control-c>", lambda e: self._key(lambda: self.finish("copy")))
         w.bind("<Control-s>", lambda e: self._key(lambda: self.finish("save")))
+        w.bind("<Control-C>", lambda e: self._key(lambda: self.finish("ocr")))  # Ctrl+Shift+C
         w.bind("<Control-z>", lambda e: self._key(self.undo))
         for tid, _, _, key in TOOLS:
             w.bind(f"<KeyPress-{key.lower()}>", lambda e, t=tid: self._key(lambda: self.set_tool(t)))
@@ -285,7 +290,10 @@ class Snipper:
             x0, y0, x1, y1 = self.sel
             s = self.sx
             box = (round(x0 * s), round(y0 * s), round(x1 * s), round(y1 * s))
-            img = render(self.shot.crop(box), self.annos, (x0, y0), s, ss=2).convert("RGB")
+            # no OCR, os desenhos atrapalhariam a leitura: só as áreas pixeladas ficam
+            annos = ([a for a in self.annos if a["kind"] == "blur"] if action == "ocr"
+                     else self.annos)
+            img = render(self.shot.crop(box), annos, (x0, y0), s, ss=2).convert("RGB")
         self.win.destroy()
         self.on_done(img, action)
 
@@ -426,6 +434,10 @@ class Snipper:
                 self.sel = None
                 self.cv.delete("ui", "selimg")
                 self._crosshair(e.x, e.y)
+            elif self.ocr_mode:
+                self.mode = None
+                self.finish("ocr")
+                return
         elif self.mode == "draw" and self.current:
             pts = self.current["points"]
             if len(pts) > 1 or self.current["kind"] in ("pen", "marker"):
@@ -589,6 +601,7 @@ class Snipper:
             ("⎘", lambda: self.finish("copy"), "Copiar (Ctrl+C)", UI_FONT),
             ("💾", lambda: self.finish("save"), "Salvar como… (Ctrl+S)", ("Segoe UI Emoji", 13)),
             ("⚡", lambda: self.finish("quick"), "Copiar + salvar na pasta (Enter)", UI_FONT),
+            ("Aa", lambda: self.finish("ocr"), "Copiar o texto da imagem (Ctrl+Shift+C)", MONO),
             ("✕", lambda: self.finish(None), "Fechar (Esc)", UI_FONT),
         ]
         bar_w = len(actions) * (BTN + 2)

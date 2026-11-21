@@ -24,6 +24,7 @@ O que já vem pronto:
 | Steam ▸      | Abrir Steam, Biblioteca, Loja, Amigos, Downloads                            |
 | Discord      | —                                                                           |
 | Recortar     | Recorte de uma área da tela                                                 |
+| Copiar texto | Arraste sobre qualquer texto da tela e ele vai para o Ctrl+C (OCR) |
 | Copiados ▸   | **Histórico do Ctrl+C**: os últimos textos e imagens copiados — escolha um e ele é colado no programa aberto |
 | Tela inteira | Print de todas as telas                                                     |
 | Navegador ▸  | Google, YouTube, Twitch, WhatsApp, Gmail                                    |
@@ -87,12 +88,23 @@ Aperte **PrtSc** (ou escolha **Recortar** na roda) e arraste para selecionar uma
 
 | Atalho                    | O que faz                                                    |
 |---------------------------|--------------------------------------------------------------|
+| `Ctrl+Shift+C`            | Copia o **texto** da área (OCR)                              |
 | `Ctrl+C`                  | Copia (é só colar com `Ctrl+V` no Discord, por exemplo)       |
 | `Ctrl+S`                  | Salvar como… (escolhe onde e o nome)                          |
 | `Enter` ou duplo clique   | Copia **e** salva em `Imagens\Mira`                          |
 | `Esc`                     | Cancela                                                      |
 
 Para o PrtSc não abrir o recorte do Mira, use `"print_screen": false` no `config.json`.
+
+## Copiar texto da tela (OCR)
+
+Aperte **Shift+PrtSc** (ou escolha **Copiar texto** na roda), arraste sobre o texto e solte: ele
+já vai para o Ctrl+C. Serve para mensagem de erro, código, chat, nick difícil, legenda de vídeo…
+No recorte normal também tem o botão **Aa** (`Ctrl+Shift+C`).
+
+Usa o OCR que já vem no Windows: **funciona sem internet** e sem instalar nada. O idioma é o do
+Windows. Se aparecer "não tem pacote de OCR para o seu idioma", instale em *Configurações →
+Hora e idioma → Idioma → Português (Brasil) → Opções*.
 
 ## Histórico do Ctrl+C (Copiados ▸)
 
@@ -170,6 +182,7 @@ Um submenu é um item `menu` com os próprios `items` dentro (pode ter menu dent
 | `folder`     | Abre uma camada com as pastas e arquivos de uma pasta                  | `path`            |
 | `games`      | Abre uma camada com os jogos instalados                                | `sources` (`steam`, `epic`, `riot`) |
 | `clipboard`  | Abre o histórico do Ctrl+C                                             | —                 |
+| `ocr`        | Selecionar uma área e copiar o texto dela                              | —                 |
 | `default`    | Abre a roda normal (útil dentro de um perfil)                          | —                 |
 
 Qualquer item com `"stay": true` não fecha a roda depois de usado.

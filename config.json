@@ -81,6 +81,12 @@
       "id": "copiados"
     },
     {
+      "name": "Copiar texto",
+      "icon": "🔤",
+      "type": "ocr",
+      "id": "copiar-texto"
+    },
+    {
       "name": "Tela inteira",
       "icon": "🖥️",
       "type": "screenshot",
@@ -430,6 +436,7 @@
     "discord",
     "recortar",
     "copiados",
+    "copiar-texto",
     "tela-inteira",
     "navegador",
     "arquivos",

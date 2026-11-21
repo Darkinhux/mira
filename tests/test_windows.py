@@ -234,3 +234,65 @@ def test_paste_from_history_and_profile(app, mira):
         app.cfg["profiles"].pop(0)
         app.wheel.rebuild()
         win.destroy()
+
+
+# ---------------------------------------------------------------- OCR
+def test_ocr_engine_reads_text():
+    import ocr
+    from PIL import ImageDraw, ImageFont
+    img = Image.new("RGB", (900, 140), "white")
+    ImageDraw.Draw(img).text((20, 30), "MIRA OCR 2026", fill="black",
+                             font=ImageFont.truetype(r"C:\Windows\Fonts\arialbd.ttf", 64))
+    text = ocr.extract_text(img)
+    assert "MIRA" in text.upper() and "2026" in text, text
+
+
+def test_shift_printscreen_copies_text(app, monkeypatch):
+    import copiados
+    import recorte
+    from pynput import keyboard
+
+    made, toasts = [], []
+    orig = recorte.Snipper
+
+    class Spy(orig):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            made.append(self)
+
+    monkeypatch.setattr(recorte, "Snipper", Spy)
+    real_toast = app.toast
+    monkeypatch.setattr(app, "toast", lambda text, *a, **kw: (toasts.append(text),
+                                                               real_toast(text, *a, **kw)))
+
+    win = tk.Toplevel(app.root)
+    win.overrideredirect(True)
+    win.attributes("-topmost", True)
+    win.configure(bg="white")
+    win.geometry("760x170+100+100")
+    tk.Label(win, text="MIRA OCR 2026", font=("Arial", 54, "bold"), bg="white",
+             fg="black").pack(expand=True)
+    pump(app, 0.6)
+    try:
+        k = keyboard.Controller()
+        with k.pressed(keyboard.Key.shift):
+            k.press(keyboard.Key.print_screen)
+            k.release(keyboard.Key.print_screen)
+        pump(app, 0.8)
+        assert made and made[-1].ocr_mode, "Shift+PrtSc não abriu o recorte de texto"
+
+        class E:
+            def __init__(self, x, y):
+                self.x, self.y = x, y
+
+        s = made[-1]
+        s._on_press(E(105, 105))
+        s._on_drag(E(855, 265))
+        s._on_release(E(855, 265))
+        end = time.monotonic() + 45
+        while time.monotonic() < end and "MIRA" not in (copiados.read_text() or "").upper():
+            pump(app, 0.3)
+        text = copiados.read_text() or ""
+        assert "MIRA" in text.upper() and "2026" in text, f"copiado: {text!r} / avisos: {toasts}"
+    finally:
+        win.destroy()

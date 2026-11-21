@@ -245,3 +245,16 @@ def test_swap_exe(tmp_path):
     assert cur.read_bytes() == b"MZ novo" and (tmp_path / "Mira.old.exe").exists()
     atualizar.cleanup_old(cur)
     assert not (tmp_path / "Mira.old.exe").exists() and cur.exists()
+
+
+# ---------------------------------------------------------------- OCR
+import ocr  # noqa: E402
+
+
+def test_ocr_prepare_scales():
+    small = ocr.prepare(Image.new("RGB", (200, 40)))
+    assert small.width > 200 and small.height > 40          # texto pequeno é ampliado
+    big = ocr.prepare(Image.new("RGB", (12000, 300)))
+    assert max(big.size) <= ocr.MAX_SIDE                      # limite do motor do Windows
+    normal = ocr.prepare(Image.new("RGB", (1200, 800)))
+    assert normal.size == (1200, 800)
