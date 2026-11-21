@@ -2,7 +2,10 @@
 
 Segure o **Mouse 4** (botão lateral do mouse), aponte para um atalho e solte.
 
-![Roda de atalhos](docs/roda.png)
+![Roda de atalhos](docs/roda.gif)
+
+Visual neon/ciberpunk: brilho de verdade (transparência por pixel), anéis girando,
+scanlines, pulso na opção escolhida e um glitch rápido quando a roda abre.
 
 - **Segurar e soltar:** segure o Mouse 4, mova o mouse na direção do atalho e solte.
 - **Clique rápido:** um toque no Mouse 4 deixa a roda aberta; aí é só clicar no atalho.
@@ -58,14 +61,17 @@ O `icon` pode ser um emoji ou o caminho de uma imagem (`.png`, `.ico`…), por e
 
 Atalhos de jogos da Steam: `"target": "steam://rungameid/730"` (troque o número pelo ID do jogo).
 
-Outras opções do `config.json`:
+Outras opções do `config.json` (troque as cores para criar seu tema — ex.: `neon` `#f9f002` e `accent` `#00f0ff`):
 
 | Opção               | Padrão              | Descrição                                     |
 |---------------------|---------------------|-----------------------------------------------|
 | `trigger`           | `mouse4`            | `mouse4`, `mouse5` ou `middle` (roda do mouse) |
 | `radius`            | `170`               | Tamanho da roda                               |
 | `inner_radius`      | `55`                | Tamanho do círculo do meio                    |
-| `accent`            | `#7c5cff`           | Cor de destaque                               |
+| `neon`              | `#00f0ff`           | Cor neon principal (linhas e textos)          |
+| `accent`            | `#ff2a6d`           | Cor de destaque (opção escolhida, cantoneiras) |
+| `background`        | `#0b0b16`           | Cor de fundo das fatias                       |
+| `animations`        | `true`              | `false` desliga as animações (PC mais fraco)  |
 | `screenshot_folder` | `~/Pictures/Mira`   | Onde os prints são salvos                     |
 
 ## Problemas comuns

@@ -3,11 +3,11 @@
   "radius": 170,
   "inner_radius": 55,
   "icon_size": 34,
-  "accent": "#7c5cff",
-  "slice_color": "#1f2029",
-  "center_color": "#15161c",
-  "text_color": "#e9e9f2",
-  "opacity": 0.96,
+  "accent": "#ff2a6d",
+  "text_color": "#e9fbff",
+  "neon": "#00f0ff",
+  "background": "#0b0b16",
+  "animations": true,
   "screenshot_folder": "~/Pictures/Mira",
   "items": [
     {

@@ -38,8 +38,12 @@ if IS_WIN:
         except Exception:
             pass
 
-from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageGrab, ImageTk  # noqa: E402
+import threading  # noqa: E402
+
+from PIL import Image, ImageChops, ImageEnhance, ImageGrab, ImageTk  # noqa: E402
 from pynput import keyboard, mouse  # noqa: E402
+
+import neon  # noqa: E402
 
 APP_NAME = "Mira"
 BASE_DIR = Path(__file__).resolve().parent
@@ -58,11 +62,11 @@ DEFAULT_CONFIG: dict = {
     "radius": 170,
     "inner_radius": 55,
     "icon_size": 34,
-    "accent": "#7c5cff",
-    "slice_color": "#1f2029",
-    "center_color": "#15161c",
-    "text_color": "#e9e9f2",
-    "opacity": 0.96,
+    "neon": "#00f0ff",
+    "accent": "#ff2a6d",
+    "background": "#0b0b16",
+    "text_color": "#e9fbff",
+    "animations": True,
     "screenshot_folder": "~/Pictures/Mira",
     "items": [
         {"name": "Steam", "icon": "🎮", "type": "open", "target": "steam://open/main"},
@@ -141,6 +145,83 @@ if IS_WIN:
     _kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
     _kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
     _kernel32.CreateMutexW.restype = wintypes.HANDLE
+
+    # --- janela com transparência por pixel (UpdateLayeredWindow) ---
+    _gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+
+    class BLENDFUNCTION(ctypes.Structure):
+        _fields_ = [("BlendOp", ctypes.c_ubyte), ("BlendFlags", ctypes.c_ubyte),
+                    ("SourceConstantAlpha", ctypes.c_ubyte), ("AlphaFormat", ctypes.c_ubyte)]
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
+                    ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
+                    ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                    ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                    ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
+                    ("biClrImportant", wintypes.DWORD)]
+
+    _user32.GetDC.argtypes = [wintypes.HWND]
+    _user32.GetDC.restype = wintypes.HDC
+    _user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    _user32.UpdateLayeredWindow.argtypes = [
+        wintypes.HWND, wintypes.HDC, ctypes.POINTER(wintypes.POINT),
+        ctypes.POINTER(wintypes.SIZE), wintypes.HDC, ctypes.POINTER(wintypes.POINT),
+        wintypes.COLORREF, ctypes.POINTER(BLENDFUNCTION), wintypes.DWORD]
+    _user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    _user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                     ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    _gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    _gdi32.CreateCompatibleDC.restype = wintypes.HDC
+    _gdi32.CreateDIBSection.argtypes = [wintypes.HDC, ctypes.POINTER(BITMAPINFOHEADER),
+                                        wintypes.UINT, ctypes.POINTER(ctypes.c_void_p),
+                                        wintypes.HANDLE, wintypes.DWORD]
+    _gdi32.CreateDIBSection.restype = wintypes.HBITMAP
+    _gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    _gdi32.SelectObject.restype = wintypes.HGDIOBJ
+    _gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    _gdi32.DeleteDC.argtypes = [wintypes.HDC]
+
+GWL_EXSTYLE = -20
+WS_EX_LAYERED, WS_EX_TRANSPARENT = 0x00080000, 0x00000020
+WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW = 0x08000000, 0x00000080
+
+
+def toplevel_hwnd(win: tk.Toplevel):
+    return _user32.GetParent(win.winfo_id()) or win.winfo_id()
+
+
+def make_layered(hwnd) -> None:
+    style = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+    _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT
+                           | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+
+
+def update_layered(hwnd, img: Image.Image, x: int, y: int) -> None:
+    """Mostra uma imagem RGBA na janela, com transparência por pixel."""
+    w, h = img.size
+    r, g, b, a = img.split()
+    data = Image.merge("RGBA", (ImageChops.multiply(b, a), ImageChops.multiply(g, a),
+                                ImageChops.multiply(r, a), a)).tobytes()  # BGRA pré-multiplicado
+    screen = _user32.GetDC(None)
+    mem = _gdi32.CreateCompatibleDC(screen)
+    bmi = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), w, -h, 1, 32, 0, 0, 0, 0, 0, 0)
+    bits = ctypes.c_void_p()
+    hbmp = _gdi32.CreateDIBSection(mem, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0)
+    try:
+        ctypes.memmove(bits, data, len(data))
+        old = _gdi32.SelectObject(mem, hbmp)
+        blend = BLENDFUNCTION(0, 0, 255, 1)  # AC_SRC_OVER, AC_SRC_ALPHA
+        ok = _user32.UpdateLayeredWindow(
+            hwnd, screen, ctypes.byref(wintypes.POINT(x, y)), ctypes.byref(wintypes.SIZE(w, h)),
+            mem, ctypes.byref(wintypes.POINT(0, 0)), 0, ctypes.byref(blend), 2)  # ULW_ALPHA
+        _gdi32.SelectObject(mem, old)
+        if not ok:
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        _gdi32.DeleteObject(hbmp)
+        _gdi32.DeleteDC(mem)
+        _user32.ReleaseDC(None, screen)
 
 
 def cursor_pos(root: tk.Misc) -> tuple[int, int]:
@@ -293,127 +374,56 @@ def slice_at(dx: float, dy: float, n: int, dead_zone: float) -> int | None:
     return int(((ang + step / 2) % (2 * math.pi)) // step) % n
 
 
-EMOJI_FONT = "C:/Windows/Fonts/seguiemj.ttf"
-IMAGE_EXTS = {".png", ".ico", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
-
-
-def render_icon(spec: str, size: int) -> Image.Image | None:
-    """Ícone como imagem: arquivo de imagem ou emoji colorido. None = usar texto."""
-    if not spec:
-        return None
-    p = Path(os.path.expandvars(os.path.expanduser(spec)))
-    if not p.is_absolute():
-        p = BASE_DIR / p
-    if p.suffix.lower() in IMAGE_EXTS and p.exists():
-        im = Image.open(p).convert("RGBA")
-        im.thumbnail((size, size), Image.LANCZOS)
-        return im
-    if not os.path.exists(EMOJI_FONT):
-        return None
-    try:
-        font = ImageFont.truetype(EMOJI_FONT, size)
-        canvas = Image.new("RGBA", (size * 3, size * 3), (0, 0, 0, 0))
-        ImageDraw.Draw(canvas).text(
-            (size * 1.5, size * 1.5), spec.replace("\ufe0f", ""),
-            font=font, anchor="mm", embedded_color=True,
-        )
-        bbox = canvas.getbbox()
-        if not bbox:
-            return None
-        im = canvas.crop(bbox)
-        im.thumbnail((size, size), Image.LANCZOS)
-        return im
-    except Exception:
-        log.exception("falha ao desenhar emoji %r", spec)
-        return None
-
-
 # --------------------------------------------------------------------------
 # A roda
 # --------------------------------------------------------------------------
 class Wheel:
-    KEY = "#010203"  # cor que vira transparente
-    PAD = 14
+    FRAME_MS = 16
+    OPEN_S = 0.18  # duração da animação de abertura
 
     def __init__(self, app: "App"):
         self.app = app
         self.win = tk.Toplevel(app.root)
-        self.win.withdraw()
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
-        self.win.configure(bg=self.KEY)
-        if IS_WIN:
-            self.win.attributes("-transparentcolor", self.KEY)
-        self.canvas = tk.Canvas(self.win, bg=self.KEY, highlightthickness=0, bd=0)
-        self.canvas.pack()
         self.visible = False
         self.selected: int | None = None
         self.center = (0, 0)
-        self._tick_job = None
+        self.origin = (0, 0)
+        self.t0 = 0.0
+        self._job = None
+        self._last = None
+        self.hwnd = None
+        if IS_WIN:
+            # janela "layered": a imagem neon é mostrada com transparência por pixel
+            self.win.geometry("1x1+-32000+-32000")
+            self.win.update()
+            self.hwnd = toplevel_hwnd(self.win)
+            make_layered(self.hwnd)
+            _user32.ShowWindow(self.hwnd, 0)  # SW_HIDE
+        else:
+            self.win.withdraw()
+            self.canvas = tk.Canvas(self.win, highlightthickness=0, bd=0,
+                                    bg=app.cfg["background"])
+            self.canvas.pack()
+            self._photo = None
+            self._img_id = None
         self.rebuild()
 
     def rebuild(self) -> None:
-        c = self.app.cfg
-        self.items = c["items"]
-        self.R = int(c["radius"])
-        self.r = int(c["inner_radius"])
-        self.dead = float(c.get("dead_zone", self.r * 0.7))
-        self.size = 2 * (self.R + self.PAD)
-        self.canvas.configure(width=self.size, height=self.size)
-        self.win.attributes("-alpha", float(c["opacity"]))
-        isz = int(c["icon_size"])
-        self.icons = []
-        for it in self.items:
-            im = render_icon(it.get("icon", ""), isz)
-            self.icons.append(ImageTk.PhotoImage(im) if im else None)
-        self.draw()
-
-    # --- desenho ---
-    def draw(self) -> None:
-        c = self.app.cfg
-        cv = self.canvas
-        cv.delete("all")
-        n = len(self.items)
-        mid = self.size / 2
-        step = 360 / n
-        for i, item in enumerate(self.items):
-            sel = i == self.selected
-            R = self.R + (8 if sel else 0)
-            start = 90 - i * step - step / 2
-            cv.create_arc(
-                mid - R, mid - R, mid + R, mid + R,
-                start=start, extent=step, style=tk.PIESLICE,
-                fill=c["accent"] if sel else c["slice_color"],
-                outline=self.KEY, width=4,
-            )
-        # anel transparente + disco central
-        g = self.r + 6
-        cv.create_oval(mid - g, mid - g, mid + g, mid + g, fill=self.KEY, outline="")
-        cv.create_oval(
-            mid - self.r, mid - self.r, mid + self.r, mid + self.r,
-            fill=c["center_color"], outline=c["accent"] if self.selected is None else "",
-            width=2,
-        )
-        # rótulos
-        rm = (self.R + self.r) / 2 + 6
-        isz = int(c["icon_size"])
-        for i, item in enumerate(self.items):
-            a = math.radians(i * step)
-            x = mid + rm * math.sin(a)
-            y = mid - rm * math.cos(a)
-            icon = self.icons[i]
-            if icon is not None:
-                cv.create_image(x, y - 9, image=icon)
-            elif item.get("icon"):
-                cv.create_text(x, y - 9, text=item["icon"], fill=c["text_color"],
-                               font=("Segoe UI Emoji", int(isz * 0.6)))
-            cv.create_text(x, y + isz / 2 + 2, text=item["name"], fill=c["text_color"],
-                           font=("Segoe UI", 9, "bold" if i == self.selected else "normal"))
-        title = self.items[self.selected]["name"] if self.selected is not None else APP_NAME
-        cv.create_text(mid, mid - 6, text=title, fill=c["text_color"],
-                       font=("Segoe UI", 11, "bold"), width=self.r * 2 - 10)
-        cv.create_text(mid, mid + 14, text="solte p/ abrir" if self.selected is not None else "Esc fecha",
-                       fill="#8a8ba0", font=("Segoe UI", 7))
+        cfg = self.app.cfg
+        self.items = cfg["items"]
+        self.renderer = neon.NeonWheel(cfg)
+        self.size = self.renderer.size
+        self.r = int(cfg["inner_radius"])
+        self.dead = float(cfg.get("dead_zone", self.r * 0.7))
+        self.animate = bool(cfg.get("animations", True))
+        if not IS_WIN:
+            self.canvas.configure(width=self.size, height=self.size, bg=cfg["background"])
+        # pré-desenha todos os estados em segundo plano para a roda abrir sem atraso
+        r = self.renderer
+        states = [None, *range(len(self.items))]
+        threading.Thread(target=lambda: [r.static(s) for s in states], daemon=True).start()
 
     # --- exibir / esconder ---
     def show_at(self, x: int, y: int) -> None:
@@ -422,36 +432,66 @@ class Wheel:
         x = max(vx + half, min(x, vx + vw - half))
         y = max(vy + half, min(y, vy + vh - half))
         self.center = (x, y)
+        self.origin = (x - half, y - half)
         self.selected = None
-        self.draw()
-        self.win.geometry(f"{self.size}x{self.size}+{x - half}+{y - half}")
-        self.win.deiconify()
-        self.win.lift()
-        self.win.attributes("-topmost", True)
-        make_noactivate(self.win)
+        self._last = None
+        self.t0 = time.monotonic()
         self.visible = True
-        self._tick()
+        self._render()
+        if IS_WIN:
+            _user32.ShowWindow(self.hwnd, 4)  # SW_SHOWNOACTIVATE
+            # HWND_TOPMOST, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+            _user32.SetWindowPos(self.hwnd, wintypes.HWND(-1), 0, 0, 0, 0, 0x13)
+        else:
+            self.win.geometry(f"{self.size}x{self.size}+{self.origin[0]}+{self.origin[1]}")
+            self.win.deiconify()
+            self.win.lift()
+        self._job = self.win.after(self.FRAME_MS, self._tick)
 
     def hide(self) -> None:
         self.visible = False
-        if self._tick_job:
-            self.win.after_cancel(self._tick_job)
-            self._tick_job = None
-        self.win.withdraw()
+        if self._job:
+            self.win.after_cancel(self._job)
+            self._job = None
+        if IS_WIN:
+            _user32.ShowWindow(self.hwnd, 0)
+        else:
+            self.win.withdraw()
 
     def update_selection(self) -> int | None:
         px, py = cursor_pos(self.app.root)
-        sel = slice_at(px - self.center[0], py - self.center[1], len(self.items), self.dead)
-        if sel != self.selected:
-            self.selected = sel
-            self.draw()
-        return sel
+        self.selected = slice_at(px - self.center[0], py - self.center[1],
+                                 len(self.items), self.dead)
+        return self.selected
+
+    def _render(self) -> None:
+        t = time.monotonic() - self.t0
+        opening = min(1.0, t / self.OPEN_S)
+        state = (self.selected, opening >= 1.0)
+        if not self.animate and state == self._last:
+            return  # nada mudou
+        self._last = state
+        img = self.renderer.frame(self.selected, t, opening, self.animate)
+        if IS_WIN:
+            update_layered(self.hwnd, img, *self.origin)
+        else:
+            bg = Image.new("RGBA", img.size, self.app.cfg["background"])
+            bg.alpha_composite(img)
+            self._photo = ImageTk.PhotoImage(bg)
+            if self._img_id is None:
+                self._img_id = self.canvas.create_image(0, 0, anchor="nw", image=self._photo)
+            else:
+                self.canvas.itemconfigure(self._img_id, image=self._photo)
 
     def _tick(self) -> None:
         if not self.visible:
             return
         self.update_selection()
-        self._tick_job = self.win.after(12, self._tick)
+        try:
+            self._render()
+        except Exception:
+            log.exception("falha ao desenhar a roda")
+        self._job = self.win.after(self.FRAME_MS, self._tick)
 
 
 # --------------------------------------------------------------------------
@@ -461,13 +501,18 @@ class Snipper:
     def __init__(self, app: "App", on_done):
         self.app = app
         self.on_done = on_done
+        cfg = app.cfg
+        self.neon, self.accent = cfg["neon"], cfg["accent"]
         root = app.root
         vx, vy, vw, vh = virtual_screen(root)
+        self.vw, self.vh = vw, vh
         self.shot = ImageGrab.grab(all_screens=True) if IS_WIN else ImageGrab.grab()
         self.sx, self.sy = self.shot.width / vw, self.shot.height / vh
         disp = self.shot if self.shot.size == (vw, vh) else self.shot.resize((vw, vh))
         self.disp = disp.convert("RGB")
-        self.bg = ImageTk.PhotoImage(ImageEnhance.Brightness(self.disp).enhance(0.45))
+        dim = ImageEnhance.Brightness(self.disp).enhance(0.4)
+        dim = Image.blend(dim, Image.new("RGB", dim.size, cfg["background"]), 0.3)
+        self.bg = ImageTk.PhotoImage(dim)
 
         self.win = tk.Toplevel(root)
         self.win.overrideredirect(True)
@@ -478,18 +523,18 @@ class Snipper:
         self.cv.pack()
         self.cv.create_image(0, 0, anchor="nw", image=self.bg)
 
-        # dica centralizada no monitor onde está o cursor (aproximação: perto do cursor)
         cx, cy = cursor_pos(root)
-        self.cv.create_text(
-            cx - vx, max(30, cy - vy - 60),
-            text="Arraste para recortar   •   Esc ou botão direito cancela",
-            fill="white", font=("Segoe UI", 12, "bold"), tags="hint",
-        )
+        hx, hy = cx - vx, max(40, cy - vy - 70)
+        self.cv.create_rectangle(hx - 230, hy - 18, hx + 230, hy + 18, fill="#07070f",
+                                 outline=self.neon, tags="hint")
+        self.cv.create_text(hx, hy, text="[ ARRASTE PARA RECORTAR ]   ESC // CANCELA",
+                            fill=self.neon, font=("Consolas", 12, "bold"), tags="hint")
 
         self.start = None
         self.cur = None
         self.crop_img = None
         self._pending = False
+        self.cv.bind("<Motion>", self._hover)
         self.cv.bind("<ButtonPress-1>", self._press)
         self.cv.bind("<B1-Motion>", self._motion)
         self.cv.bind("<ButtonRelease-1>", self._release)
@@ -501,6 +546,17 @@ class Snipper:
         self.win.lift()
         self.win.focus_force()
         self.cv.focus_set()
+
+    def _crosshair(self, x, y):
+        self.cv.delete("cross")
+        for coords in ((0, y, self.vw, y), (x, 0, x, self.vh)):
+            self.cv.create_line(*coords, fill=self.neon, dash=(6, 6), tags="cross")
+        self.cv.create_text(x + 12, y + 14, anchor="nw", text=f"X{x:04d} Y{y:04d}",
+                            fill=self.neon, font=("Consolas", 8), tags="cross")
+
+    def _hover(self, e):
+        if not self.start:
+            self._crosshair(e.x, e.y)
 
     def _rect(self):
         (x0, y0), (x1, y1) = self.start, self.cur
@@ -521,17 +577,26 @@ class Snipper:
     def _redraw(self):
         self._pending = False
         self.cv.delete("sel")
+        self._crosshair(*self.cur)
         x0, y0, x1, y1 = self._rect()
         if x1 - x0 < 1 or y1 - y0 < 1:
             return
+        cv = self.cv
         self.crop_img = ImageTk.PhotoImage(self.disp.crop((x0, y0, x1, y1)))
-        self.cv.create_image(x0, y0, anchor="nw", image=self.crop_img, tags="sel")
-        self.cv.create_rectangle(x0, y0, x1, y1, outline=self.app.cfg["accent"],
-                                 width=2, tags="sel")
+        cv.create_image(x0, y0, anchor="nw", image=self.crop_img, tags="sel")
+        cv.create_rectangle(x0, y0, x1, y1, outline=self.neon, width=1, tags="sel")
+        L = max(4, min(22, (x1 - x0) // 3, (y1 - y0) // 3))
+        for x, y, sx, sy in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
+            cv.create_line(x, y + sy * L, x, y, x + sx * L, y, fill=self.accent, width=3,
+                           tags="sel")
         w, h = round((x1 - x0) * self.sx), round((y1 - y0) * self.sy)
-        ly = y0 - 14 if y0 > 24 else y1 + 14
-        self.cv.create_text(x0 + 4, ly, anchor="w", text=f"{w} × {h}", fill="white",
-                            font=("Segoe UI", 10, "bold"), tags="sel")
+        label = f" {w} × {h} "
+        ly = y0 - 24 if y0 > 30 else y1 + 6
+        tid = cv.create_text(x0, ly, anchor="nw", text=label, fill="#07070f",
+                             font=("Consolas", 10, "bold"), tags="sel")
+        bx0, by0, bx1, by1 = cv.bbox(tid)
+        cv.tag_lower(cv.create_rectangle(bx0 - 2, by0 - 2, bx1 + 2, by1 + 2, fill=self.accent,
+                                         outline="", tags="sel"), tid)
 
     def _release(self, e):
         if not self.start:
@@ -629,7 +694,7 @@ class App:
             items.append(pystray.MenuItem("Iniciar com o Windows", put("toggle_startup"),
                                           checked=lambda item: startup_enabled()))
         items += [pystray.Menu.SEPARATOR, pystray.MenuItem("Sair", put("quit"))]
-        self.tray = pystray.Icon(APP_NAME, tray_image(self.cfg["accent"]),
+        self.tray = pystray.Icon(APP_NAME, neon.tray_image(self.cfg["neon"], self.cfg["accent"]),
                                  f"{APP_NAME} — roda de atalhos", pystray.Menu(*items))
         self.tray.run_detached()
 
@@ -754,19 +819,28 @@ class App:
 
     # --- avisos ---
     def toast(self, text: str, error: bool = False, ms: int = 2600, on_click=None):
+        line = self.cfg["accent"] if error else self.cfg["neon"]
+        bg = "#07070f"
         w = tk.Toplevel(self.root)
         w.overrideredirect(True)
         w.attributes("-topmost", True)
-        w.attributes("-alpha", 0.95)
-        bg = "#5a1f24" if error else "#1f2029"
-        lbl = tk.Label(w, text=text, bg=bg, fg="#f2f2f7", font=("Segoe UI", 10),
-                       justify="left", padx=16, pady=10, wraplength=420,
-                       highlightthickness=2,
-                       highlightbackground="#c0392b" if error else self.cfg["accent"])
-        lbl.pack()
+        w.attributes("-alpha", 0.94)
+        border = tk.Frame(w, bg=line, padx=1, pady=1)
+        border.pack()
+        body = tk.Frame(border, bg=bg)
+        body.pack()
+        tk.Frame(body, bg=line, width=4).pack(side="left", fill="y")
+        box = tk.Frame(body, bg=bg, padx=14, pady=8)
+        box.pack(side="left")
+        tk.Label(box, text=("MIRA.SYS // ERRO" if error else "MIRA.SYS // OK"), bg=bg, fg=line,
+                 font=("Consolas", 8, "bold"), anchor="w").pack(fill="x")
+        lbl = tk.Label(box, text=text, bg=bg, fg=self.cfg["text_color"], font=("Consolas", 10),
+                       justify="left", anchor="w", wraplength=420)
+        lbl.pack(fill="x")
         if on_click:
-            lbl.configure(cursor="hand2")
-            lbl.bind("<Button-1>", lambda e: (on_click(), w.destroy()))
+            for wid in (box, lbl):
+                wid.configure(cursor="hand2")
+                wid.bind("<Button-1>", lambda e: (on_click(), w.destroy()))
         w.update_idletasks()
         sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
         w.geometry(f"+{sw - w.winfo_width() - 24}+{sh - w.winfo_height() - 64}")
@@ -787,19 +861,6 @@ class App:
         self.toast(f"Mira ativo — segure o {self.cfg['trigger'].replace('mouse', 'Mouse ')} "
                    "para abrir a roda")
         self.root.mainloop()
-
-
-def tray_image(accent: str) -> Image.Image:
-    s = 64
-    im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    for i in range(8):
-        start = -90 - 22.5 + i * 45 + 3
-        d.pieslice((2, 2, s - 2, s - 2), start, start + 39,
-                   fill=accent if i == 0 else "#3a3b4a")
-    d.ellipse((20, 20, s - 20, s - 20), fill=(0, 0, 0, 0))
-    d.ellipse((24, 24, s - 24, s - 24), fill="#e9e9f2")
-    return im
 
 
 def main():
