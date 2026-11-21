@@ -277,6 +277,7 @@ def test_shift_printscreen_copies_text(app, monkeypatch):
              fg="black").pack(expand=True)
     pump(app, 0.6)
     try:
+        assert copiados.write_text("(vazio)")  # nada de testes anteriores na área de transferência
         k = keyboard.Controller()
         with k.pressed(keyboard.Key.shift):
             k.press(keyboard.Key.print_screen)
@@ -293,7 +294,7 @@ def test_shift_printscreen_copies_text(app, monkeypatch):
         s._on_drag(E(855, 265))
         s._on_release(E(855, 265))
         end = time.monotonic() + 45
-        while time.monotonic() < end and "MIRA" not in (copiados.read_text() or "").upper():
+        while time.monotonic() < end and "2026" not in (copiados.read_text() or ""):
             pump(app, 0.3)
         text = copiados.read_text() or ""
         assert "MIRA" in text.upper() and "2026" in text, f"copiado: {text!r} / avisos: {toasts}"
