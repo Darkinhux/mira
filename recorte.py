@@ -24,6 +24,7 @@ TOOLS = [  # id, símbolo, nome, tecla de atalho
     ("arrow", "➚", "Seta", "A"),
     ("rect", "▢", "Retângulo", "R"),
     ("marker", "▌", "Marca-texto", "M"),
+    ("blur", "▦", "Pixelar / esconder", "B"),
     ("text", "T", "Texto", "T"),
 ]
 WIDTHS = [2, 4, 6, 10, 16]
@@ -103,9 +104,33 @@ def draw_annotations(layer: Image.Image, annos: list[dict], off, scale: float) -
                    stroke_fill=_contrast(col) + (255,))
 
 
+def pixelate(img: Image.Image, box, block: int) -> None:
+    """Pixela uma área da imagem (para esconder nomes, e-mails, chats...)."""
+    x0, y0, x1, y1 = box
+    x0, x1 = sorted((max(0, round(x0)), min(img.width, round(x1))))
+    y0, y1 = sorted((max(0, round(y0)), min(img.height, round(y1))))
+    w, h = x1 - x0, y1 - y0
+    if w < 2 or h < 2:
+        return
+    region = img.crop((x0, y0, x1, y1))
+    small = region.resize((max(1, w // block), max(1, h // block)), Image.BILINEAR)
+    img.paste(small.resize((w, h), Image.NEAREST), (x0, y0))
+
+
+def blur_block(width: int) -> int:
+    return 6 + width * 2
+
+
 def render(base: Image.Image, annos, off, scale: float, ss: int = 1) -> Image.Image:
     """Recorte + anotações. ss=2 suaviza as bordas na imagem final."""
     out = base.convert("RGBA")
+    for a in annos:  # as áreas pixeladas vêm primeiro, por baixo dos desenhos
+        if a["kind"] == "blur" and len(a["points"]) > 1:
+            (px0, py0), (px1, py1) = a["points"][0], a["points"][-1]
+            box = ((px0 - off[0]) * scale, (py0 - off[1]) * scale,
+                   (px1 - off[0]) * scale, (py1 - off[1]) * scale)
+            pixelate(out, box, max(3, round(blur_block(a["width"]) * scale)))
+    annos = [a for a in annos if a["kind"] != "blur"]
     if annos:
         layer = Image.new("RGBA", (out.width * ss, out.height * ss), (0, 0, 0, 0))
         draw_annotations(layer, annos, off, scale * ss)
@@ -451,7 +476,10 @@ class Snipper:
             self._cache_key = key
             self._cache = render(self.disp.crop((x0, y0, x1, y1)), self.annos, (x0, y0), 1.0)
         img = self._cache
-        if self.current:
+        if self.current and self.current["kind"] == "blur":
+            img = render(self.disp.crop((x0, y0, x1, y1)), self.annos + [self.current],
+                         (x0, y0), 1.0)
+        elif self.current:
             img = img.copy()
             layer = Image.new("RGBA", img.size, (0, 0, 0, 0))
             draw_annotations(layer, [self.current], (x0, y0), 1.0)

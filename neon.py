@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageColor, ImageDraw, ImageFilter, ImageFont
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = (Path(sys.executable).parent if getattr(sys, "frozen", False)
+            else Path(__file__).resolve().parent)
 
 FONTS = {
     "display": [
@@ -115,7 +117,7 @@ def fit_font(kind, text, max_w, start, minimum=9):
 
 
 def is_branch(item: dict) -> bool:
-    return item.get("type") in ("menu", "folder")
+    return item.get("type") in ("menu", "folder", "games")
 
 
 def ellipsize(text: str, fnt, max_w: float) -> str:
@@ -474,7 +476,7 @@ class NeonWheel:
         return img
 
 
-def tray_image(neon: str, accent: str) -> Image.Image:
+def tray_image(neon: str, accent: str, size: int = 64) -> Image.Image:
     s = 64 * 4
     n, a = rgb(neon), rgb(accent)
     im = Image.new("RGBA", (s, s), (0, 0, 0, 0))
@@ -485,4 +487,4 @@ def tray_image(neon: str, accent: str) -> Image.Image:
         pts = sector(c, 70, 124, i * step - step / 2, i * step + step / 2, 18)
         d.polygon(pts, fill=(a if i == 0 else mix((10, 10, 20), n, 0.35)) + (255,))
     d.ellipse(circle(c, 52), outline=n + (255,), width=14)
-    return im.resize((64, 64), Image.LANCZOS)
+    return im.resize((size, size), Image.LANCZOS)

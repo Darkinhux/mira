@@ -13,6 +13,16 @@
   "screenshot_folder": "{pictures}/Mira",
   "items": [
     {
+      "name": "Jogos",
+      "icon": "🕹️",
+      "type": "games",
+      "sources": [
+        "steam",
+        "epic",
+        "riot"
+      ]
+    },
+    {
       "name": "Steam",
       "icon": "🎮",
       "type": "menu",

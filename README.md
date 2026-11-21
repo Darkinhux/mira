@@ -20,6 +20,7 @@ O que já vem pronto:
 
 | Item         | Abre                                                                        |
 |--------------|-----------------------------------------------------------------------------|
+| Jogos ▸      | **Seus jogos instalados**, achados sozinhos na Steam, Epic e Riot, com os ícones. Os que você jogou por último vêm primeiro |
 | Steam ▸      | Abrir Steam, Biblioteca, Loja, Amigos, Downloads                            |
 | Discord      | —                                                                           |
 | Recortar     | Recorte de uma área da tela                                                 |
@@ -34,6 +35,19 @@ aparecem com o ícone de verdade (o mesmo do Explorador). A primeira opção, **
 abre a pasta no Explorador, e se tiver muita coisa aparece **Mais (N)** para a próxima página.
 
 ## Instalação (Windows 10/11)
+
+### Jeito fácil: Mira.exe
+
+Baixe o `Mira.exe` na aba **Actions** do GitHub (último resultado verde → *Artifacts* →
+**Mira-exe**), coloque numa pasta e abra. Não precisa instalar nada. O `config.json` é
+criado ao lado do `.exe` na primeira vez.
+
+> O Windows SmartScreen ou o antivírus podem estranhar um `.exe` novo e sem assinatura.
+> Clique em "Mais informações" → "Executar assim mesmo".
+
+Para gerar o `.exe` você mesmo: dois cliques em **`criar_exe.bat`**.
+
+### Com Python
 
 1. Instale o [Python 3.11 ou mais novo](https://www.python.org/downloads/) e marque
    **"Add python.exe to PATH"** na instalação.
@@ -52,7 +66,8 @@ Aperte **PrtSc** (ou escolha **Recortar** na roda) e arraste para selecionar uma
 - **Ajustar:** puxe as alças para redimensionar ou arraste por dentro para mover.
   Arrastar fora da seleção começa uma nova.
 - **Desenhar** (barra ao lado): Lápis `P`, Linha `L`, Seta `A`, Retângulo `R`,
-  Marca-texto `M`, Texto `T`, cor e desfazer (`Ctrl+Z`). A **roda do mouse** muda a
+  Marca-texto `M`, **Pixelar `B`** (esconde nome, e-mail, chat…), Texto `T`, cor e
+  desfazer (`Ctrl+Z`). A **roda do mouse** muda a
   espessura (e o tamanho do texto). O botão direito solta a ferramenta.
 - **Terminar** (barra de baixo):
 
@@ -102,6 +117,7 @@ Um submenu é um item `menu` com os próprios `items` dentro (pode ter menu dent
 | `screenshot` | Print de todas as telas                                                | —                 |
 | `menu`       | Abre uma camada com mais itens                                         | `items`           |
 | `folder`     | Abre uma camada com as pastas e arquivos de uma pasta                  | `path`            |
+| `games`      | Abre uma camada com os jogos instalados                                | `sources` (`steam`, `epic`, `riot`) |
 
 Qualquer item com `"stay": true` não fecha a roda depois de usado.
 
@@ -135,4 +151,13 @@ Outras opções do `config.json` (troque as cores para criar seu tema — ex.: `
   Use o modo **"janela sem bordas" (borderless)** nas configurações do jogo.
 - **Não funciona em programas abertos como administrador:** o Windows bloqueia isso.
   Execute o Mira como administrador também.
+- **Um jogo não aparece em Jogos ▸:** por enquanto o Mira encontra jogos da Steam, Epic e Riot.
+  Para outros, crie um item `open` apontando para o `.exe` com `"icon": "auto"`.
 - **Algo deu errado:** veja o arquivo `mira.log` nesta pasta.
+
+## Testes
+
+`python -m pytest tests`. No GitHub, a cada mudança, um Windows de verdade roda todos os
+testes: abre a roda e confere a transparência com um print da tela, simula o Mouse 4 e o
+PrtSc, testa os ícones e a área de transferência. Depois ele gera e abre o `Mira.exe`.
+Os prints ficam em *Artifacts* → **prints-dos-testes**.

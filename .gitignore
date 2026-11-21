@@ -1,3 +1,8 @@
 mira.log
 __pycache__/
 *.pyc
+build/
+dist/
+*.spec
+tests/artifacts/
+.pytest_cache/

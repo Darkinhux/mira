@@ -46,11 +46,13 @@ import threading  # noqa: E402
 from PIL import Image, ImageChops, ImageGrab, ImageTk  # noqa: E402
 from pynput import keyboard, mouse  # noqa: E402
 
+import jogos  # noqa: E402
 import neon  # noqa: E402
 import recorte  # noqa: E402
 
 APP_NAME = "Mira"
-BASE_DIR = Path(__file__).resolve().parent
+FROZEN = getattr(sys, "frozen", False)  # rodando como Mira.exe (PyInstaller)
+BASE_DIR = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 LOG_PATH = BASE_DIR / "mira.log"
 
@@ -75,6 +77,7 @@ DEFAULT_CONFIG: dict = {
     "print_screen": True,
     "screenshot_folder": "{pictures}/Mira",
     "items": [
+        {"name": "Jogos", "icon": "🕹️", "type": "games", "sources": ["steam", "epic", "riot"]},
         {"name": "Steam", "icon": "🎮", "type": "menu", "items": [
             {"name": "Abrir Steam", "icon": "🎮", "type": "open", "target": "steam://open/main"},
             {"name": "Biblioteca", "icon": "📚", "type": "open", "target": "steam://open/games"},
@@ -383,6 +386,8 @@ RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 
 
 def _startup_command() -> str:
+    if FROZEN:
+        return f'"{sys.executable}"'
     exe = Path(sys.executable)
     pythonw = exe.with_name("pythonw.exe")
     return f'"{pythonw if pythonw.exists() else exe}" "{Path(__file__).resolve()}"'
@@ -540,26 +545,47 @@ def folder_entries(path: str) -> list[tuple[str, str, bool]]:
     return [(name, p, d) for _, _, name, p, d in out[:MAX_ENTRIES]]
 
 
-def folder_items(path: str, offset: int, icon_size: int) -> list[dict]:
-    entries = folder_entries(path)
-    items: list[dict] = []
-    if offset == 0:
-        items.append({"name": "Abrir pasta", "icon": "📂", "type": "open", "target": path})
+def paginate(entries: list, offset: int, lead: list[dict], convert, more) -> list[dict]:
+    """Uma página da camada (máx. 12 fatias). lead = itens fixos só na 1ª página;
+    convert(entrada) -> item; more(próximo_offset, restantes) -> item "Mais"."""
+    page = list(lead) if offset == 0 else []
     rest = entries[offset:]
-    cap = SLOTS - len(items)
+    cap = SLOTS - len(page)
     take = rest if len(rest) <= cap else rest[:cap - 1]
-    for name, p, is_dir in take:
-        if is_dir:
-            items.append({"name": name, "icon": "📁", "type": "folder", "path": p})
-        else:
-            stem, ext = os.path.splitext(name)
-            items.append({"name": stem if ext.lower() in HIDE_EXT else name,
-                          "icon": emoji_for(name), "type": "open", "target": p,
-                          "_icon_img": file_icon(p, icon_size)})
+    page += [convert(e) for e in take]
     if len(take) < len(rest):
-        items.append({"name": f"Mais ({len(rest) - len(take)})", "icon": "⏩", "type": "folder",
-                      "path": path, "offset": offset + len(take)})
-    return items
+        page.append(more(offset + len(take), len(rest) - len(take)))
+    return page
+
+
+def folder_items(path: str, offset: int, icon_size: int) -> list[dict]:
+    def convert(entry):
+        name, p, is_dir = entry
+        if is_dir:
+            return {"name": name, "icon": "📁", "type": "folder", "path": p}
+        stem, ext = os.path.splitext(name)
+        return {"name": stem if ext.lower() in HIDE_EXT else name, "icon": emoji_for(name),
+                "type": "open", "target": p, "_icon_img": file_icon(p, icon_size)}
+
+    return paginate(
+        folder_entries(path), offset,
+        [{"name": "Abrir pasta", "icon": "📂", "type": "open", "target": path}], convert,
+        lambda nxt, left: {"name": f"Mais ({left})", "icon": "⏩", "type": "folder",
+                           "path": path, "offset": nxt})
+
+
+def game_items(item: dict, offset: int, icon_size: int) -> list[dict]:
+    games = jogos.find_games(item.get("sources", ("steam", "epic", "riot")))
+
+    def convert(g):
+        g = dict(g)
+        if g.get("icon_file"):
+            g["_icon_img"] = file_icon(g["icon_file"], icon_size)
+        return g
+
+    return paginate(
+        games, offset, [], convert,
+        lambda nxt, left: {**item, "name": f"Mais ({left})", "icon": "⏩", "offset": nxt})
 
 
 def file_icon(path: str, size: int) -> Image.Image | None:
@@ -1007,10 +1033,18 @@ class App:
     def activate(self, item: dict):
         """Abre a subcamada do item ou executa a ação dele."""
         kind = item.get("type")
-        if kind in ("menu", "folder"):
+        if kind in ("menu", "folder", "games"):
             try:
                 if kind == "menu":
                     self.wheel.push(item["items"], item["name"])
+                elif kind == "games":
+                    items = game_items(item, int(item.get("offset", 0)),
+                                       int(self.cfg["icon_size"]))
+                    if not items:
+                        self.toast("Nenhum jogo encontrado (Steam, Epic ou Riot).", error=True)
+                        return
+                    title = item["name"] if not item.get("offset") else self.wheel.layer.title
+                    self.wheel.push(items, title)
                 else:
                     path = resolve_path(item["path"])
                     items = folder_items(path, int(item.get("offset", 0)),
