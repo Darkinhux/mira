@@ -1,0 +1,73 @@
+name: Windows
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write  # para publicar o Mira.exe nas Releases
+
+jobs:
+  testar-e-compilar:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: python -m pip install -r requirements.txt pytest pyinstaller
+
+      - name: Garantir o OCR do Windows (inglês) para o teste de "Copiar texto"
+        shell: pwsh
+        run: |
+          $cap = Get-WindowsCapability -Online -Name "Language.OCR~~~en-US*" | Select-Object -First 1
+          Write-Host "OCR en-US: $($cap.State)"
+          if ($cap -and $cap.State -ne "Installed") { Add-WindowsCapability -Online -Name $cap.Name | Out-Null }
+
+      - name: Testes (inclui roda, hook do Mouse 4, PrtSc, ícones e área de transferência)
+        run: python -m pytest -v tests
+
+      - name: Gerar Mira.exe
+        run: python build_exe.py
+
+      - name: Testar o Mira.exe (abre, espera e confere o log)
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\Mira.exe -PassThru
+          Start-Sleep -Seconds 15
+          if ($p.HasExited) { Write-Host "O Mira.exe fechou sozinho"; Get-Content dist\mira.log -ErrorAction SilentlyContinue; exit 1 }
+          Stop-Process -Id $p.Id -Force
+          Get-Content dist\mira.log
+          if (-not (Select-String -Path dist\mira.log -Pattern "Mira iniciado" -Quiet)) { exit 1 }
+          if (-not (Select-String -Path dist\mira.log -Pattern "build $env:GITHUB_RUN_NUMBER\)" -Quiet)) { Write-Host "o .exe não sabe o número do build"; exit 1 }
+
+      - name: Prints dos testes
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: prints-dos-testes
+          path: tests/artifacts
+
+      - name: Mira.exe
+        uses: actions/upload-artifact@v7
+        with:
+          name: Mira-exe
+          path: dist/Mira.exe
+
+      - name: Publicar o Mira.exe nas Releases (link direto)
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: mira-v${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          name: Mira (build ${{ github.run_number }})
+          make_latest: "true"
+          body: |
+            Baixe o **Mira.exe** abaixo, coloque numa pasta só dele e abra.
+            Se o Windows avisar, clique em "Mais informações" → "Executar assim mesmo".
+
+            Commit: ${{ github.sha }}
+          files: dist/Mira.exe

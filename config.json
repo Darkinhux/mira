@@ -1,0 +1,450 @@
+{
+  "trigger": "mouse4",
+  "radius": 170,
+  "inner_radius": 55,
+  "icon_size": 34,
+  "neon": "#00f0ff",
+  "accent": "#ff2a6d",
+  "background": "#0b0b16",
+  "text_color": "#e9fbff",
+  "animations": true,
+  "hover_open_ms": 450,
+  "print_screen": true,
+  "screenshot_folder": "{pictures}/Mira",
+  "items": [
+    {
+      "name": "Jogos",
+      "icon": "🕹️",
+      "type": "games",
+      "sources": [
+        "steam",
+        "epic",
+        "riot"
+      ],
+      "id": "jogos"
+    },
+    {
+      "name": "Steam",
+      "icon": "🎮",
+      "type": "menu",
+      "items": [
+        {
+          "name": "Abrir Steam",
+          "icon": "🎮",
+          "type": "open",
+          "target": "steam://open/main"
+        },
+        {
+          "name": "Biblioteca",
+          "icon": "📚",
+          "type": "open",
+          "target": "steam://open/games"
+        },
+        {
+          "name": "Loja",
+          "icon": "🛒",
+          "type": "open",
+          "target": "steam://store"
+        },
+        {
+          "name": "Amigos",
+          "icon": "👥",
+          "type": "open",
+          "target": "steam://open/friends"
+        },
+        {
+          "name": "Downloads",
+          "icon": "⬇️",
+          "type": "open",
+          "target": "steam://open/downloads"
+        }
+      ],
+      "id": "steam"
+    },
+    {
+      "name": "Discord",
+      "icon": "💬",
+      "type": "open",
+      "target": "discord://",
+      "id": "discord"
+    },
+    {
+      "name": "Recortar",
+      "icon": "✂️",
+      "type": "snip",
+      "id": "recortar"
+    },
+    {
+      "name": "Copiados",
+      "icon": "📋",
+      "type": "clipboard",
+      "id": "copiados"
+    },
+    {
+      "name": "Copiar texto",
+      "icon": "🔤",
+      "type": "ocr",
+      "id": "copiar-texto"
+    },
+    {
+      "name": "Tela inteira",
+      "icon": "🖥️",
+      "type": "screenshot",
+      "id": "tela-inteira"
+    },
+    {
+      "name": "Navegador",
+      "icon": "🌐",
+      "type": "menu",
+      "items": [
+        {
+          "name": "Google",
+          "icon": "🔎",
+          "type": "open",
+          "target": "https://www.google.com"
+        },
+        {
+          "name": "YouTube",
+          "icon": "▶️",
+          "type": "open",
+          "target": "https://www.youtube.com"
+        },
+        {
+          "name": "Twitch",
+          "icon": "📺",
+          "type": "open",
+          "target": "https://www.twitch.tv"
+        },
+        {
+          "name": "WhatsApp",
+          "icon": "📱",
+          "type": "open",
+          "target": "https://web.whatsapp.com"
+        },
+        {
+          "name": "Gmail",
+          "icon": "✉️",
+          "type": "open",
+          "target": "https://mail.google.com"
+        }
+      ],
+      "id": "navegador"
+    },
+    {
+      "name": "Arquivos",
+      "icon": "📁",
+      "type": "menu",
+      "items": [
+        {
+          "name": "Área de Trabalho",
+          "icon": "🖥️",
+          "type": "folder",
+          "path": "{desktop}"
+        },
+        {
+          "name": "Downloads",
+          "icon": "⬇️",
+          "type": "folder",
+          "path": "{downloads}"
+        },
+        {
+          "name": "Documentos",
+          "icon": "📄",
+          "type": "folder",
+          "path": "{documents}"
+        },
+        {
+          "name": "Imagens",
+          "icon": "🖼️",
+          "type": "folder",
+          "path": "{pictures}"
+        },
+        {
+          "name": "Vídeos",
+          "icon": "🎬",
+          "type": "folder",
+          "path": "{videos}"
+        },
+        {
+          "name": "Músicas",
+          "icon": "🎵",
+          "type": "folder",
+          "path": "{music}"
+        },
+        {
+          "name": "Prints",
+          "icon": "📸",
+          "type": "folder",
+          "path": "{pictures}/Mira"
+        },
+        {
+          "name": "Disco C:",
+          "icon": "💽",
+          "type": "folder",
+          "path": "C:\\"
+        }
+      ],
+      "id": "arquivos"
+    },
+    {
+      "name": "Mídia",
+      "icon": "🎧",
+      "type": "menu",
+      "items": [
+        {
+          "name": "Play/Pause",
+          "icon": "⏯️",
+          "type": "keys",
+          "keys": "media_play_pause",
+          "stay": true
+        },
+        {
+          "name": "Próxima",
+          "icon": "⏭️",
+          "type": "keys",
+          "keys": "media_next",
+          "stay": true
+        },
+        {
+          "name": "Volume +",
+          "icon": "🔊",
+          "type": "keys",
+          "keys": "media_volume_up",
+          "stay": true
+        },
+        {
+          "name": "Mudo",
+          "icon": "🔇",
+          "type": "keys",
+          "keys": "media_volume_mute",
+          "stay": true
+        },
+        {
+          "name": "Volume -",
+          "icon": "🔉",
+          "type": "keys",
+          "keys": "media_volume_down",
+          "stay": true
+        },
+        {
+          "name": "Anterior",
+          "icon": "⏮️",
+          "type": "keys",
+          "keys": "media_previous",
+          "stay": true
+        }
+      ],
+      "id": "midia"
+    },
+    {
+      "name": "Sistema",
+      "icon": "⚙️",
+      "type": "menu",
+      "items": [
+        {
+          "name": "Gerenciador",
+          "icon": "📊",
+          "type": "keys",
+          "keys": "ctrl+shift+esc"
+        },
+        {
+          "name": "Configurações",
+          "icon": "⚙️",
+          "type": "open",
+          "target": "ms-settings:"
+        },
+        {
+          "name": "Bloquear",
+          "icon": "🔒",
+          "type": "command",
+          "command": "rundll32.exe user32.dll,LockWorkStation"
+        },
+        {
+          "name": "Lixeira",
+          "icon": "🗑️",
+          "type": "open",
+          "target": "shell:RecycleBinFolder"
+        },
+        {
+          "name": "Desligar (1 min)",
+          "icon": "⏻",
+          "type": "command",
+          "command": "shutdown /s /t 60"
+        },
+        {
+          "name": "Cancelar desligar",
+          "icon": "✋",
+          "type": "command",
+          "command": "shutdown /a"
+        }
+      ],
+      "id": "sistema"
+    }
+  ],
+  "clipboard_history": true,
+  "clipboard_max": 25,
+  "clipboard_save": false,
+  "profiles": [
+    {
+      "name": "Navegador",
+      "match": [
+        "chrome.exe",
+        "msedge.exe",
+        "brave.exe",
+        "firefox.exe",
+        "opera.exe",
+        "opera_gx.exe",
+        "vivaldi.exe"
+      ],
+      "items": [
+        {
+          "name": "Nova aba",
+          "icon": "➕",
+          "type": "keys",
+          "keys": "ctrl+t"
+        },
+        {
+          "name": "Reabrir aba",
+          "icon": "↩️",
+          "type": "keys",
+          "keys": "ctrl+shift+t"
+        },
+        {
+          "name": "Anônima",
+          "icon": "🕶️",
+          "type": "keys",
+          "keys": "ctrl+shift+n"
+        },
+        {
+          "name": "Recortar",
+          "icon": "✂️",
+          "type": "snip"
+        },
+        {
+          "name": "Copiados",
+          "icon": "📋",
+          "type": "clipboard"
+        },
+        {
+          "name": "Downloads",
+          "icon": "⬇️",
+          "type": "keys",
+          "keys": "ctrl+j"
+        },
+        {
+          "name": "Fechar aba",
+          "icon": "✖️",
+          "type": "keys",
+          "keys": "ctrl+w"
+        },
+        {
+          "name": "Geral",
+          "icon": "🧭",
+          "type": "default"
+        }
+      ]
+    },
+    {
+      "name": "Valorant",
+      "match": [
+        "VALORANT-Win64-Shipping.exe"
+      ],
+      "items": [
+        {
+          "name": "Recortar",
+          "icon": "✂️",
+          "type": "snip"
+        },
+        {
+          "name": "Tela inteira",
+          "icon": "🖥️",
+          "type": "screenshot"
+        },
+        {
+          "name": "Discord",
+          "icon": "💬",
+          "type": "open",
+          "target": "discord://"
+        },
+        {
+          "name": "Mídia",
+          "icon": "🎧",
+          "type": "menu",
+          "items": [
+            {
+              "name": "Play/Pause",
+              "icon": "⏯️",
+              "type": "keys",
+              "keys": "media_play_pause",
+              "stay": true
+            },
+            {
+              "name": "Próxima",
+              "icon": "⏭️",
+              "type": "keys",
+              "keys": "media_next",
+              "stay": true
+            },
+            {
+              "name": "Volume +",
+              "icon": "🔊",
+              "type": "keys",
+              "keys": "media_volume_up",
+              "stay": true
+            },
+            {
+              "name": "Mudo",
+              "icon": "🔇",
+              "type": "keys",
+              "keys": "media_volume_mute",
+              "stay": true
+            },
+            {
+              "name": "Volume -",
+              "icon": "🔉",
+              "type": "keys",
+              "keys": "media_volume_down",
+              "stay": true
+            },
+            {
+              "name": "Anterior",
+              "icon": "⏮️",
+              "type": "keys",
+              "keys": "media_previous",
+              "stay": true
+            }
+          ],
+          "id": "midia"
+        },
+        {
+          "name": "Copiados",
+          "icon": "📋",
+          "type": "clipboard"
+        },
+        {
+          "name": "Geral",
+          "icon": "🧭",
+          "type": "default"
+        }
+      ]
+    }
+  ],
+  "update_check": true,
+  "_seen_items": [
+    "jogos",
+    "steam",
+    "discord",
+    "recortar",
+    "copiados",
+    "copiar-texto",
+    "tela-inteira",
+    "navegador",
+    "arquivos",
+    "midia",
+    "sistema"
+  ],
+  "_seen_profiles": [
+    "navegador",
+    "valorant"
+  ]
+}

@@ -1,0 +1,1610 @@
+"""
+Mira — roda de atalhos acionada por um botão do mouse (padrão: Mouse 4).
+
+Como usar:
+  * Segure o Mouse 4, mova o cursor na direção do atalho e solte.
+  * Ou dê um clique rápido no Mouse 4: a roda fica aberta e você clica no atalho.
+  * Esc, clique direito ou clique no centro fecham a roda.
+
+Os atalhos ficam em config.json (ao lado deste arquivo).
+"""
+from __future__ import annotations
+
+import ctypes
+import fnmatch
+import io
+import json
+import logging
+import math
+import os
+import queue
+import re
+import subprocess
+import sys
+import time
+import tkinter as tk
+import unicodedata
+import uuid
+from datetime import datetime
+from functools import lru_cache
+from pathlib import Path
+from tkinter import filedialog, messagebox
+
+IS_WIN = sys.platform == "win32"
+
+# Precisa vir antes de qualquer janela/captura para que as coordenadas do
+# cursor, das janelas e dos prints batam em telas com escala (125%, 150%...).
+if IS_WIN:
+    try:
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+import threading  # noqa: E402
+
+from PIL import Image, ImageChops, ImageGrab, ImageTk  # noqa: E402
+from pynput import keyboard, mouse  # noqa: E402
+
+import atualizar  # noqa: E402
+import copiados  # noqa: E402
+import jogos  # noqa: E402
+import migracao  # noqa: E402
+import neon  # noqa: E402
+import ocr  # noqa: E402
+import recorte  # noqa: E402
+
+APP_NAME = "Mira"
+FROZEN = getattr(sys, "frozen", False)  # rodando como Mira.exe (PyInstaller)
+BASE_DIR = Path(sys.executable).parent if FROZEN else Path(__file__).resolve().parent
+CONFIG_PATH = BASE_DIR / "config.json"
+LOG_PATH = BASE_DIR / "mira.log"
+
+logging.basicConfig(
+    filename=LOG_PATH,
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+log = logging.getLogger(APP_NAME)
+
+DEFAULT_CONFIG: dict = {
+    "trigger": "mouse4",
+    "radius": 170,
+    "inner_radius": 55,
+    "icon_size": 34,
+    "neon": "#00f0ff",
+    "accent": "#ff2a6d",
+    "background": "#0b0b16",
+    "text_color": "#e9fbff",
+    "animations": True,
+    "hover_open_ms": 450,
+    "print_screen": True,
+    "screenshot_folder": "{pictures}/Mira",
+    "items": [
+        {"name": "Jogos", "icon": "🕹️", "type": "games", "sources": ["steam", "epic", "riot"]},
+        {"name": "Steam", "icon": "🎮", "type": "menu", "items": [
+            {"name": "Abrir Steam", "icon": "🎮", "type": "open", "target": "steam://open/main"},
+            {"name": "Biblioteca", "icon": "📚", "type": "open", "target": "steam://open/games"},
+            {"name": "Loja", "icon": "🛒", "type": "open", "target": "steam://store"},
+            {"name": "Amigos", "icon": "👥", "type": "open", "target": "steam://open/friends"},
+            {"name": "Downloads", "icon": "⬇️", "type": "open",
+             "target": "steam://open/downloads"},
+        ]},
+        {"name": "Discord", "icon": "💬", "type": "open", "target": "discord://"},
+        {"name": "Recortar", "icon": "✂️", "type": "snip"},
+        {"name": "Tela inteira", "icon": "🖥️", "type": "screenshot"},
+        {"name": "Navegador", "icon": "🌐", "type": "menu", "items": [
+            {"name": "Google", "icon": "🔎", "type": "open", "target": "https://www.google.com"},
+            {"name": "YouTube", "icon": "▶️", "type": "open", "target": "https://www.youtube.com"},
+            {"name": "Twitch", "icon": "📺", "type": "open", "target": "https://www.twitch.tv"},
+            {"name": "WhatsApp", "icon": "📱", "type": "open", "target": "https://web.whatsapp.com"},
+            {"name": "Gmail", "icon": "✉️", "type": "open", "target": "https://mail.google.com"},
+        ]},
+        {"name": "Arquivos", "icon": "📁", "type": "menu", "items": [
+            {"name": "Área de Trabalho", "icon": "🖥️", "type": "folder", "path": "{desktop}"},
+            {"name": "Downloads", "icon": "⬇️", "type": "folder", "path": "{downloads}"},
+            {"name": "Documentos", "icon": "📄", "type": "folder", "path": "{documents}"},
+            {"name": "Imagens", "icon": "🖼️", "type": "folder", "path": "{pictures}"},
+            {"name": "Vídeos", "icon": "🎬", "type": "folder", "path": "{videos}"},
+            {"name": "Músicas", "icon": "🎵", "type": "folder", "path": "{music}"},
+            {"name": "Prints", "icon": "📸", "type": "folder", "path": "{pictures}/Mira"},
+            {"name": "Disco C:", "icon": "💽", "type": "folder", "path": "C:\\"},
+        ]},
+        {"name": "Mídia", "icon": "🎧", "type": "menu", "items": [
+            {"name": "Play/Pause", "icon": "⏯️", "type": "keys", "keys": "media_play_pause",
+             "stay": True},
+            {"name": "Próxima", "icon": "⏭️", "type": "keys", "keys": "media_next", "stay": True},
+            {"name": "Volume +", "icon": "🔊", "type": "keys", "keys": "media_volume_up",
+             "stay": True},
+            {"name": "Mudo", "icon": "🔇", "type": "keys", "keys": "media_volume_mute",
+             "stay": True},
+            {"name": "Volume -", "icon": "🔉", "type": "keys", "keys": "media_volume_down",
+             "stay": True},
+            {"name": "Anterior", "icon": "⏮️", "type": "keys", "keys": "media_previous",
+             "stay": True},
+        ]},
+        {"name": "Sistema", "icon": "⚙️", "type": "menu", "items": [
+            {"name": "Gerenciador", "icon": "📊", "type": "keys", "keys": "ctrl+shift+esc"},
+            {"name": "Configurações", "icon": "⚙️", "type": "open", "target": "ms-settings:"},
+            {"name": "Bloquear", "icon": "🔒", "type": "command",
+             "command": "rundll32.exe user32.dll,LockWorkStation"},
+            {"name": "Lixeira", "icon": "🗑️", "type": "open", "target": "shell:RecycleBinFolder"},
+            {"name": "Desligar (1 min)", "icon": "⏻", "type": "command",
+             "command": "shutdown /s /t 60"},
+            {"name": "Cancelar desligar", "icon": "✋", "type": "command", "command": "shutdown /a"},
+        ]},
+    ],
+}
+
+# "Copiados" (histórico do Ctrl+C) logo depois de "Recortar"
+DEFAULT_CONFIG["items"].insert(
+    [i["name"] for i in DEFAULT_CONFIG["items"]].index("Recortar") + 1,
+    {"name": "Copiados", "icon": "📋", "type": "clipboard"})
+DEFAULT_CONFIG["items"].insert(
+    [i["name"] for i in DEFAULT_CONFIG["items"]].index("Copiados") + 1,
+    {"name": "Copiar texto", "icon": "🔤", "type": "ocr"})
+DEFAULT_CONFIG.update({
+    "clipboard_history": True,
+    "clipboard_max": 25,
+    "clipboard_save": False,
+    # roda diferente conforme o programa que está na frente (nome do .exe)
+    "profiles": [
+        {"name": "Navegador",
+         "match": ["chrome.exe", "msedge.exe", "brave.exe", "firefox.exe", "opera.exe",
+                   "opera_gx.exe", "vivaldi.exe"],
+         "items": [
+             {"name": "Nova aba", "icon": "➕", "type": "keys", "keys": "ctrl+t"},
+             {"name": "Reabrir aba", "icon": "↩️", "type": "keys", "keys": "ctrl+shift+t"},
+             {"name": "Anônima", "icon": "🕶️", "type": "keys", "keys": "ctrl+shift+n"},
+             {"name": "Recortar", "icon": "✂️", "type": "snip"},
+             {"name": "Copiados", "icon": "📋", "type": "clipboard"},
+             {"name": "Downloads", "icon": "⬇️", "type": "keys", "keys": "ctrl+j"},
+             {"name": "Fechar aba", "icon": "✖️", "type": "keys", "keys": "ctrl+w"},
+             {"name": "Geral", "icon": "🧭", "type": "default"},
+         ]},
+        {"name": "Valorant",
+         "match": ["VALORANT-Win64-Shipping.exe"],
+         "items": [
+             {"name": "Recortar", "icon": "✂️", "type": "snip"},
+             {"name": "Tela inteira", "icon": "🖥️", "type": "screenshot"},
+             {"name": "Discord", "icon": "💬", "type": "open", "target": "discord://"},
+             next(i for i in DEFAULT_CONFIG["items"] if i["name"] == "Mídia"),
+             {"name": "Copiados", "icon": "📋", "type": "clipboard"},
+             {"name": "Geral", "icon": "🧭", "type": "default"},
+         ]},
+    ],
+})
+
+DEFAULT_CONFIG["update_check"] = True  # procura versão nova nas Releases do GitHub
+for _it in DEFAULT_CONFIG["items"]:  # id fixo: a migração reconhece o item mesmo renomeado
+    _it["id"] = unicodedata.normalize("NFKD", _it["name"]).encode("ascii", "ignore") \
+        .decode().lower().replace(" ", "-")
+
+# trigger -> (tipo, número do XBUTTON)
+TRIGGERS = {
+    "mouse4": ("x", 1),
+    "mouse5": ("x", 2),
+    "middle": ("m", 0),
+}
+
+# Mensagens do hook de mouse do Windows
+WM_LBUTTONDOWN, WM_LBUTTONUP = 0x0201, 0x0202
+WM_RBUTTONDOWN, WM_RBUTTONUP = 0x0204, 0x0205
+WM_MBUTTONDOWN, WM_MBUTTONUP = 0x0207, 0x0208
+WM_XBUTTONDOWN, WM_XBUTTONUP = 0x020B, 0x020C
+
+
+# --------------------------------------------------------------------------
+# Configuração
+# --------------------------------------------------------------------------
+def _write_config(data: dict) -> None:
+    CONFIG_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def load_config() -> dict:
+    if not CONFIG_PATH.exists():
+        fresh, _, _ = migracao.migrate(DEFAULT_CONFIG, DEFAULT_CONFIG)
+        _write_config(fresh)
+    with CONFIG_PATH.open(encoding="utf-8") as f:
+        user = json.load(f)
+    # novidades desta versão entram no config sem mexer no que foi personalizado
+    migrated, added, notes = migracao.migrate(user, DEFAULT_CONFIG)
+    if migrated != user:
+        backup = CONFIG_PATH.with_name("config.antes-da-atualizacao.json")
+        backup.write_text(json.dumps(user, ensure_ascii=False, indent=2), encoding="utf-8")
+        _write_config(migrated)
+        log.info("config atualizado: %s %s", added, notes)
+    user = migrated
+    cfg = {**DEFAULT_CONFIG, **user}
+    cfg["_migration"] = (added, notes)
+    if cfg["trigger"] not in TRIGGERS:
+        raise ValueError(f"\"trigger\" deve ser um de: {', '.join(TRIGGERS)}")
+    cfg["items"] = _check_items(cfg.get("items", []), "\"items\"", minimum=2)
+    profiles = []
+    for prof in cfg.get("profiles") or []:
+        if not isinstance(prof, dict) or not prof.get("name"):
+            continue
+        match = prof.get("match") or []
+        if isinstance(match, str):
+            match = [match]
+        prof["match"] = [str(m).lower() for m in match]
+        prof["title"] = [str(t).lower() for t in (prof.get("title") or [])]
+        if not prof["match"] and not prof["title"]:
+            raise ValueError(f"o perfil \"{prof['name']}\" precisa de \"match\" ou \"title\".")
+        prof["items"] = _check_items(prof.get("items", []), f"o perfil \"{prof['name']}\"")
+        profiles.append(prof)
+    cfg["profiles"] = profiles
+    return cfg
+
+
+def _check_items(items, where: str, minimum: int = 1) -> list[dict]:
+    items = [i for i in items if isinstance(i, dict) and i.get("name")]
+    if not minimum <= len(items) <= 12:
+        raise ValueError(f"{where} precisa ter de {minimum} a 12 itens (tem {len(items)}).")
+    for it in items:
+        if it.get("type") == "menu":
+            it["items"] = _check_items(it.get("items", []), f"o menu \"{it['name']}\"")
+        elif it.get("type") == "folder" and not it.get("path"):
+            raise ValueError(f"a pasta \"{it['name']}\" precisa de \"path\".")
+    return items
+
+
+# --------------------------------------------------------------------------
+# Funções do Windows (via ctypes, sem dependências extras)
+# --------------------------------------------------------------------------
+if IS_WIN:
+    from ctypes import wintypes
+
+    _user32 = ctypes.WinDLL("user32", use_last_error=True)
+    _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+    _user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+    _user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+    _user32.GetSystemMetrics.restype = ctypes.c_int
+    _user32.GetParent.argtypes = [wintypes.HWND]
+    _user32.GetParent.restype = wintypes.HWND
+    _user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    _user32.GetWindowLongW.restype = ctypes.c_long
+    _user32.SetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_long]
+    _user32.SetWindowLongW.restype = ctypes.c_long
+    _user32.OpenClipboard.argtypes = [wintypes.HWND]
+    _user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+    _user32.SetClipboardData.restype = wintypes.HANDLE
+    _kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+    _kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+    _kernel32.GlobalLock.argtypes = [wintypes.HGLOBAL]
+    _kernel32.GlobalLock.restype = ctypes.c_void_p
+    _kernel32.GlobalUnlock.argtypes = [wintypes.HGLOBAL]
+    _kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+    _kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+    _kernel32.CreateMutexW.restype = wintypes.HANDLE
+
+    # --- janela com transparência por pixel (UpdateLayeredWindow) ---
+    _gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+
+    class BLENDFUNCTION(ctypes.Structure):
+        _fields_ = [("BlendOp", ctypes.c_ubyte), ("BlendFlags", ctypes.c_ubyte),
+                    ("SourceConstantAlpha", ctypes.c_ubyte), ("AlphaFormat", ctypes.c_ubyte)]
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG),
+                    ("biHeight", wintypes.LONG), ("biPlanes", wintypes.WORD),
+                    ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                    ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                    ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
+                    ("biClrImportant", wintypes.DWORD)]
+
+    _user32.GetDC.argtypes = [wintypes.HWND]
+    _user32.GetDC.restype = wintypes.HDC
+    _user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+    _user32.UpdateLayeredWindow.argtypes = [
+        wintypes.HWND, wintypes.HDC, ctypes.POINTER(wintypes.POINT),
+        ctypes.POINTER(wintypes.SIZE), wintypes.HDC, ctypes.POINTER(wintypes.POINT),
+        wintypes.COLORREF, ctypes.POINTER(BLENDFUNCTION), wintypes.DWORD]
+    _user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    _user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                     ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    class WNDCLASSEXW(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.UINT), ("style", wintypes.UINT),
+                    ("lpfnWndProc", ctypes.c_void_p), ("cbClsExtra", ctypes.c_int),
+                    ("cbWndExtra", ctypes.c_int), ("hInstance", wintypes.HINSTANCE),
+                    ("hIcon", wintypes.HICON), ("hCursor", wintypes.HANDLE),
+                    ("hbrBackground", wintypes.HBRUSH), ("lpszMenuName", wintypes.LPCWSTR),
+                    ("lpszClassName", wintypes.LPCWSTR), ("hIconSm", wintypes.HICON)]
+
+    _user32.RegisterClassExW.argtypes = [ctypes.POINTER(WNDCLASSEXW)]
+    _user32.RegisterClassExW.restype = wintypes.ATOM
+    _user32.CreateWindowExW.argtypes = [
+        wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, wintypes.HMENU,
+        wintypes.HINSTANCE, wintypes.LPVOID]
+    _user32.CreateWindowExW.restype = wintypes.HWND
+    _kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+    _kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+    _gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+    _gdi32.CreateCompatibleDC.restype = wintypes.HDC
+    _gdi32.CreateDIBSection.argtypes = [wintypes.HDC, ctypes.POINTER(BITMAPINFOHEADER),
+                                        wintypes.UINT, ctypes.POINTER(ctypes.c_void_p),
+                                        wintypes.HANDLE, wintypes.DWORD]
+    _gdi32.CreateDIBSection.restype = wintypes.HBITMAP
+    _gdi32.SelectObject.argtypes = [wintypes.HDC, wintypes.HGDIOBJ]
+    _gdi32.SelectObject.restype = wintypes.HGDIOBJ
+    _gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+    _gdi32.DeleteDC.argtypes = [wintypes.HDC]
+
+    # --- pastas especiais e ícones de arquivos ---
+    _shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    _ole32 = ctypes.WinDLL("ole32", use_last_error=True)
+
+    class SHFILEINFOW(ctypes.Structure):
+        _fields_ = [("hIcon", wintypes.HICON), ("iIcon", ctypes.c_int),
+                    ("dwAttributes", wintypes.DWORD), ("szDisplayName", wintypes.WCHAR * 260),
+                    ("szTypeName", wintypes.WCHAR * 80)]
+
+    class ICONINFO(ctypes.Structure):
+        _fields_ = [("fIcon", wintypes.BOOL), ("xHotspot", wintypes.DWORD),
+                    ("yHotspot", wintypes.DWORD), ("hbmMask", wintypes.HBITMAP),
+                    ("hbmColor", wintypes.HBITMAP)]
+
+    class BITMAP(ctypes.Structure):
+        _fields_ = [("bmType", wintypes.LONG), ("bmWidth", wintypes.LONG),
+                    ("bmHeight", wintypes.LONG), ("bmWidthBytes", wintypes.LONG),
+                    ("bmPlanes", wintypes.WORD), ("bmBitsPixel", wintypes.WORD),
+                    ("bmBits", ctypes.c_void_p)]
+
+    class BITMAPINFO(ctypes.Structure):
+        _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 256)]
+
+    _shell32.SHGetKnownFolderPath.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.HANDLE,
+                                              ctypes.POINTER(ctypes.c_wchar_p)]
+    _shell32.SHGetKnownFolderPath.restype = ctypes.c_long
+    _shell32.SHGetFileInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
+                                        ctypes.POINTER(SHFILEINFOW), wintypes.UINT, wintypes.UINT]
+    _shell32.SHGetFileInfoW.restype = ctypes.c_void_p
+    _ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    _ole32.CoInitialize.argtypes = [ctypes.c_void_p]
+    _user32.GetIconInfo.argtypes = [wintypes.HICON, ctypes.POINTER(ICONINFO)]
+    _user32.DestroyIcon.argtypes = [wintypes.HICON]
+    _gdi32.GetObjectW.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p]
+    _gdi32.GetDIBits.argtypes = [wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
+                                 ctypes.c_void_p, ctypes.POINTER(BITMAPINFO), wintypes.UINT]
+
+    _user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    _user32.GetAsyncKeyState.restype = ctypes.c_short
+    _user32.GetForegroundWindow.restype = wintypes.HWND
+    _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                                     wintypes.LPWSTR,
+                                                     ctypes.POINTER(wintypes.DWORD)]
+    _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+GWL_EXSTYLE = -20
+WS_POPUP, WS_EX_TOPMOST = 0x80000000, 0x00000008
+WS_EX_LAYERED, WS_EX_TRANSPARENT = 0x00080000, 0x00000020
+WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW = 0x08000000, 0x00000080
+
+
+def toplevel_hwnd(win: tk.Toplevel):
+    """HWND da moldura da janela. (GetParent numa janela popup devolveria a janela
+    "dona", não a própria — por isso usamos o wm_frame do Tk.)"""
+    win.update_idletasks()
+    return int(win.wm_frame(), 16)
+
+
+_WNDCLASS = None
+
+
+def create_layered_window():
+    """Cria uma janela popup nativa, transparente a cliques e que não rouba o foco."""
+    global _WNDCLASS
+    hinst = _kernel32.GetModuleHandleW(None)
+    if _WNDCLASS is None:
+        wc = WNDCLASSEXW()
+        wc.cbSize = ctypes.sizeof(WNDCLASSEXW)
+        wc.lpfnWndProc = ctypes.cast(_user32.DefWindowProcW, ctypes.c_void_p).value
+        wc.hInstance = hinst
+        wc.lpszClassName = "MiraWheel"
+        if not _user32.RegisterClassExW(ctypes.byref(wc)) and ctypes.get_last_error() != 1410:
+            raise ctypes.WinError(ctypes.get_last_error())
+        _WNDCLASS = wc  # precisa continuar vivo
+    hwnd = _user32.CreateWindowExW(
+        WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+        "MiraWheel", "Mira", WS_POPUP, -32000, -32000, 1, 1, None, None, hinst, None)
+    if not hwnd:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return hwnd
+
+
+def update_layered(hwnd, img: Image.Image, x: int, y: int) -> None:
+    """Mostra uma imagem RGBA na janela, com transparência por pixel."""
+    w, h = img.size
+    r, g, b, a = img.split()
+    data = Image.merge("RGBA", (ImageChops.multiply(b, a), ImageChops.multiply(g, a),
+                                ImageChops.multiply(r, a), a)).tobytes()  # BGRA pré-multiplicado
+    screen = _user32.GetDC(None)
+    mem = _gdi32.CreateCompatibleDC(screen)
+    bmi = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), w, -h, 1, 32, 0, 0, 0, 0, 0, 0)
+    bits = ctypes.c_void_p()
+    hbmp = _gdi32.CreateDIBSection(mem, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0)
+    try:
+        ctypes.memmove(bits, data, len(data))
+        old = _gdi32.SelectObject(mem, hbmp)
+        blend = BLENDFUNCTION(0, 0, 255, 1)  # AC_SRC_OVER, AC_SRC_ALPHA
+        ok = _user32.UpdateLayeredWindow(
+            hwnd, screen, ctypes.byref(wintypes.POINT(x, y)), ctypes.byref(wintypes.SIZE(w, h)),
+            mem, ctypes.byref(wintypes.POINT(0, 0)), 0, ctypes.byref(blend), 2)  # ULW_ALPHA
+        _gdi32.SelectObject(mem, old)
+        if not ok:
+            raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        _gdi32.DeleteObject(hbmp)
+        _gdi32.DeleteDC(mem)
+        _user32.ReleaseDC(None, screen)
+
+
+def foreground_app() -> tuple[str, str]:
+    """(nome do .exe em minúsculas, título) da janela que está na frente."""
+    if not IS_WIN:
+        return "", ""
+    hwnd = _user32.GetForegroundWindow()
+    if not hwnd:
+        return "", ""
+    title = ctypes.create_unicode_buffer(512)
+    _user32.GetWindowTextW(hwnd, title, 512)
+    pid = wintypes.DWORD()
+    _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    exe = ""
+    h = _kernel32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if h:
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(1024)
+            if _kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                exe = os.path.basename(buf.value).lower()
+        finally:
+            _kernel32.CloseHandle(h)
+    return exe, title.value
+
+
+def match_profile(profiles: list[dict], exe: str, title: str) -> dict | None:
+    title = title.lower()
+    for prof in profiles:
+        if exe and any(fnmatch.fnmatch(exe, pat) for pat in prof["match"]):
+            return prof
+        if title and any(t in title for t in prof["title"]):
+            return prof
+    return None
+
+
+def cursor_pos(root: tk.Misc) -> tuple[int, int]:
+    if IS_WIN:
+        pt = wintypes.POINT()
+        if _user32.GetCursorPos(ctypes.byref(pt)):
+            return pt.x, pt.y
+    return root.winfo_pointerxy()
+
+
+def virtual_screen(root: tk.Misc) -> tuple[int, int, int, int]:
+    """(x, y, largura, altura) da área que cobre todos os monitores."""
+    if IS_WIN:
+        g = _user32.GetSystemMetrics
+        return g(76), g(77), g(78), g(79)
+    return 0, 0, root.winfo_screenwidth(), root.winfo_screenheight()
+
+
+def make_noactivate(win: tk.Toplevel) -> None:
+    """Faz a janela não roubar o foco (o jogo/app atual continua ativo)."""
+    if not IS_WIN:
+        return
+    try:
+        hwnd = toplevel_hwnd(win)
+        style = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+        _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+    except Exception:
+        log.exception("make_noactivate falhou")
+
+
+def copy_image_to_clipboard(img: Image.Image) -> bool:
+    if not IS_WIN:
+        return False
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, "BMP")
+    data = buf.getvalue()[14:]  # CF_DIB = BMP sem o cabeçalho de arquivo
+    GMEM_MOVEABLE, CF_DIB = 0x0002, 8
+    h = _kernel32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+    if not h:
+        return False
+    p = _kernel32.GlobalLock(h)
+    ctypes.memmove(p, data, len(data))
+    _kernel32.GlobalUnlock(h)
+    for _ in range(20):
+        if _user32.OpenClipboard(None):
+            break
+        time.sleep(0.05)
+    else:
+        _kernel32.GlobalFree(h)
+        return False
+    try:
+        _user32.EmptyClipboard()
+        if not _user32.SetClipboardData(CF_DIB, h):
+            _kernel32.GlobalFree(h)
+            return False
+        return True  # a partir daqui o Windows é dono da memória
+    finally:
+        _user32.CloseClipboard()
+
+
+# --------------------------------------------------------------------------
+# Inicializar com o Windows
+# --------------------------------------------------------------------------
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+
+
+def _startup_command() -> str:
+    if FROZEN:
+        return f'"{sys.executable}"'
+    exe = Path(sys.executable)
+    pythonw = exe.with_name("pythonw.exe")
+    return f'"{pythonw if pythonw.exists() else exe}" "{Path(__file__).resolve()}"'
+
+
+def startup_enabled() -> bool:
+    if not IS_WIN:
+        return False
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as k:
+            winreg.QueryValueEx(k, APP_NAME)
+            return True
+    except OSError:
+        return False
+
+
+def set_startup(enable: bool) -> None:
+    import winreg
+
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
+        if enable:
+            winreg.SetValueEx(k, APP_NAME, 0, winreg.REG_SZ, _startup_command())
+        else:
+            try:
+                winreg.DeleteValue(k, APP_NAME)
+            except FileNotFoundError:
+                pass
+
+
+# --------------------------------------------------------------------------
+# Ações
+# --------------------------------------------------------------------------
+_kb = keyboard.Controller()
+KEY_ALIASES = {
+    "win": "cmd", "windows": "cmd", "super": "cmd",
+    "control": "ctrl", "escape": "esc", "return": "enter", "del": "delete",
+    "pgup": "page_up", "pgdn": "page_down", "printscreen": "print_screen",
+}
+
+
+def parse_key(name: str):
+    n = name.strip().lower()
+    n = KEY_ALIASES.get(n, n)
+    if hasattr(keyboard.Key, n):
+        return getattr(keyboard.Key, n)
+    if len(n) == 1:
+        return keyboard.KeyCode.from_char(n)
+    raise ValueError(f"tecla desconhecida: {name!r}")
+
+
+def send_keys(combo: str) -> None:
+    keys = [parse_key(p) for p in combo.split("+") if p.strip()]
+    for k in keys:
+        _kb.press(k)
+    for k in reversed(keys):
+        _kb.release(k)
+
+
+def open_target(target: str, args: list[str] | None = None) -> None:
+    target = resolve_path(target)
+    if args:
+        subprocess.Popen([target, *map(str, args)])
+    elif IS_WIN:
+        os.startfile(target)  # programas, pastas, URLs e protocolos (steam://, discord://)
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", target])
+    else:
+        subprocess.Popen(["xdg-open", target])
+
+
+# --------------------------------------------------------------------------
+# Pastas: caminhos especiais, listagem e ícones de arquivos
+# --------------------------------------------------------------------------
+KNOWN_FOLDERS = {
+    "desktop": ("B4BFCC3A-DB2C-424C-B029-7FE99A87C641", "Desktop"),
+    "documents": ("FDD39AD0-238F-46AF-ADB4-6C85480369C7", "Documents"),
+    "downloads": ("374DE290-123F-4565-9164-39C4925E467B", "Downloads"),
+    "pictures": ("33E28130-4E1E-4676-835A-98395C3BC3BB", "Pictures"),
+    "music": ("4BD8D571-6D19-48D3-BE97-422220080E43", "Music"),
+    "videos": ("18989B1D-99B5-455B-841C-AB7C74E4DDFC", "Videos"),
+}
+
+
+@lru_cache(maxsize=None)
+def known_folder(name: str) -> str:
+    """Caminho real de Área de Trabalho, Downloads etc. (funciona com OneDrive)."""
+    guid, fallback = KNOWN_FOLDERS[name]
+    if IS_WIN:
+        try:
+            g = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(guid).bytes_le)
+            out = ctypes.c_wchar_p()
+            if _shell32.SHGetKnownFolderPath(ctypes.byref(g), 0, None, ctypes.byref(out)) == 0:
+                path = out.value
+                _ole32.CoTaskMemFree(ctypes.cast(out, ctypes.c_void_p))
+                return path
+        except Exception:
+            log.exception("SHGetKnownFolderPath falhou para %s", name)
+    return str(Path.home() / fallback)
+
+
+def resolve_path(spec: str) -> str:
+    """Expande {desktop}, {downloads}..., ~ e %VARIAVEIS%. URLs/protocolos ficam como estão."""
+    s = spec.strip()
+    m = re.match(r"^\{(\w+)\}(.*)$", s)
+    if m and m.group(1).lower() in KNOWN_FOLDERS:
+        s = known_folder(m.group(1).lower()) + m.group(2)
+    if re.match(r"^[a-zA-Z][\w+.-]+:", s):  # https:, steam:, ms-settings:, shell:...
+        return s
+    return os.path.normpath(os.path.expandvars(os.path.expanduser(s)))
+
+
+FILE_EMOJI = {
+    "🖼️": {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".heic"},
+    "🎬": {".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv"},
+    "🎵": {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"},
+    "📄": {".pdf", ".doc", ".docx", ".txt", ".md", ".odt", ".rtf"},
+    "📊": {".xls", ".xlsx", ".csv", ".ods", ".ppt", ".pptx"},
+    "📦": {".zip", ".rar", ".7z", ".tar", ".gz"},
+    "⚙️": {".exe", ".msi", ".bat", ".cmd", ".ps1"},
+    "🔗": {".lnk", ".url"},
+}
+HIDE_EXT = {".lnk", ".url"}  # atalhos aparecem sem a extensão
+SKIP_NAMES = {"desktop.ini", "thumbs.db"}
+MAX_ENTRIES = 400
+SLOTS = 12
+
+
+def emoji_for(name: str) -> str:
+    ext = os.path.splitext(name)[1].lower()
+    for emo, exts in FILE_EMOJI.items():
+        if ext in exts:
+            return emo
+    return "📄"
+
+
+def folder_entries(path: str) -> list[tuple[str, str, bool]]:
+    """(nome, caminho, é_pasta) — pastas primeiro, sem arquivos ocultos/de sistema."""
+    out = []
+    with os.scandir(path) as it:
+        for e in it:
+            if e.name.startswith(".") or e.name.lower() in SKIP_NAMES:
+                continue
+            try:
+                st = e.stat(follow_symlinks=False)
+                if getattr(st, "st_file_attributes", 0) & 0x6:  # HIDDEN | SYSTEM
+                    continue
+                is_dir = e.is_dir()
+            except OSError:
+                continue
+            key = [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", e.name.lower())]
+            out.append((not is_dir, key, e.name, e.path, is_dir))
+    out.sort()
+    return [(name, p, d) for _, _, name, p, d in out[:MAX_ENTRIES]]
+
+
+def paginate(entries: list, offset: int, lead: list[dict], convert, more) -> list[dict]:
+    """Uma página da camada (máx. 12 fatias). lead = itens fixos só na 1ª página;
+    convert(entrada) -> item; more(próximo_offset, restantes) -> item "Mais"."""
+    page = list(lead) if offset == 0 else []
+    rest = entries[offset:]
+    cap = SLOTS - len(page)
+    take = rest if len(rest) <= cap else rest[:cap - 1]
+    page += [convert(e) for e in take]
+    if len(take) < len(rest):
+        page.append(more(offset + len(take), len(rest) - len(take)))
+    return page
+
+
+def folder_items(path: str, offset: int, icon_size: int) -> list[dict]:
+    def convert(entry):
+        name, p, is_dir = entry
+        if is_dir:
+            return {"name": name, "icon": "📁", "type": "folder", "path": p}
+        stem, ext = os.path.splitext(name)
+        return {"name": stem if ext.lower() in HIDE_EXT else name, "icon": emoji_for(name),
+                "type": "open", "target": p, "_icon_img": file_icon(p, icon_size)}
+
+    return paginate(
+        folder_entries(path), offset,
+        [{"name": "Abrir pasta", "icon": "📂", "type": "open", "target": path}], convert,
+        lambda nxt, left: {"name": f"Mais ({left})", "icon": "⏩", "type": "folder",
+                           "path": path, "offset": nxt})
+
+
+def game_items(item: dict, offset: int, icon_size: int) -> list[dict]:
+    games = jogos.find_games(item.get("sources", ("steam", "epic", "riot")))
+
+    def convert(g):
+        g = dict(g)
+        if g.get("icon_file"):
+            g["_icon_img"] = file_icon(g["icon_file"], icon_size)
+        return g
+
+    return paginate(
+        games, offset, [], convert,
+        lambda nxt, left: {**item, "name": f"Mais ({left})", "icon": "⏩", "offset": nxt})
+
+
+def file_icon(path: str, size: int) -> Image.Image | None:
+    """Ícone real do arquivo/atalho no Windows (o mesmo do Explorer)."""
+    if not IS_WIN:
+        return None
+    sfi = SHFILEINFOW()
+    try:
+        if not _shell32.SHGetFileInfoW(path, 0, ctypes.byref(sfi), ctypes.sizeof(sfi), 0x100):
+            return None
+    except Exception:
+        return None
+    hicon = sfi.hIcon
+    ii = ICONINFO()
+    try:
+        if not hicon or not _user32.GetIconInfo(hicon, ctypes.byref(ii)) or not ii.hbmColor:
+            return None
+        bm = BITMAP()
+        _gdi32.GetObjectW(ii.hbmColor, ctypes.sizeof(bm), ctypes.byref(bm))
+        w, h = bm.bmWidth, bm.bmHeight
+        hdc = _user32.GetDC(None)
+        try:
+            def bits(hbmp):
+                bmi = BITMAPINFO()
+                bmi.bmiHeader = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), w, -h, 1, 32,
+                                                 0, 0, 0, 0, 0, 0)
+                buf = ctypes.create_string_buffer(w * h * 4)
+                _gdi32.GetDIBits(hdc, hbmp, 0, h, buf, ctypes.byref(bmi), 0)
+                return Image.frombuffer("RGBA", (w, h), buf.raw, "raw", "BGRA", 0, 1)
+            img = bits(ii.hbmColor)
+            if img.getchannel("A").getextrema()[1] == 0:  # ícone antigo sem alfa: usa a máscara
+                mask = bits(ii.hbmMask).convert("L").point(lambda v: 0 if v > 127 else 255)
+                img.putalpha(mask)
+        finally:
+            _user32.ReleaseDC(None, hdc)
+        if img.size != (size, size):
+            img = img.resize((size, size), Image.LANCZOS)
+        return img
+    except Exception:
+        log.exception("ícone de %s", path)
+        return None
+    finally:
+        if ii.hbmColor:
+            _gdi32.DeleteObject(ii.hbmColor)
+        if ii.hbmMask:
+            _gdi32.DeleteObject(ii.hbmMask)
+        if hicon:
+            _user32.DestroyIcon(hicon)
+
+
+# --------------------------------------------------------------------------
+# Geometria da roda
+# --------------------------------------------------------------------------
+def slice_at(dx: float, dy: float, n: int, dead_zone: float) -> int | None:
+    """Índice da fatia na direção (dx, dy). Item 0 fica no topo, sentido horário."""
+    if math.hypot(dx, dy) < dead_zone:
+        return None
+    ang = math.atan2(dx, -dy) % (2 * math.pi)
+    step = 2 * math.pi / n
+    return int(((ang + step / 2) % (2 * math.pi)) // step) % n
+
+
+# --------------------------------------------------------------------------
+# A roda (com camadas)
+# --------------------------------------------------------------------------
+class Layer:
+    def __init__(self, cfg, items, title, crumbs, depth):
+        for it in items:  # "icon": "auto" -> ícone do próprio programa/arquivo
+            if it.get("icon") == "auto" and "_icon_img" not in it:
+                path = resolve_path(str(it.get("target") or it.get("path") or ""))
+                img = file_icon(path, int(cfg["icon_size"])) if os.path.exists(path) else None
+                it["_icon_img"] = img
+                if img is None:
+                    it["icon"] = "⚙️"
+        self.items = items
+        self.title = title
+        self.crumbs = crumbs
+        self.renderer = neon.NeonWheel(cfg, items, title, " / ".join(crumbs), depth)
+        r = self.renderer
+        states = [None, *range(len(items))]
+        # pré-desenha os estados em segundo plano para não travar ao passar o mouse
+        threading.Thread(target=lambda: [r.static(s) for s in states], daemon=True).start()
+
+
+class Wheel:
+    FRAME_MS = 16
+    OPEN_S = 0.18  # duração da animação de abertura
+
+    def __init__(self, app: "App"):
+        self.app = app
+        self.visible = False
+        self.stack: list[Layer] = []
+        self.selected: int | None = None
+        self.dist = 0.0
+        self.anchor = (0, 0)
+        self.center = (0, 0)
+        self.origin = (0, 0)
+        self.size = 0
+        self.t0 = 0.0
+        self._job = None
+        self._last = None
+        self.hwnd = None
+        if IS_WIN:
+            # janela nativa "layered": a imagem neon aparece com transparência por pixel
+            # (o Windows não aceita UpdateLayeredWindow numa janela do Tk)
+            self.hwnd = create_layered_window()
+        else:
+            self.win = tk.Toplevel(app.root)
+            self.win.overrideredirect(True)
+            self.win.attributes("-topmost", True)
+            self.win.withdraw()
+            self.canvas = tk.Canvas(self.win, highlightthickness=0, bd=0,
+                                    bg=app.cfg["background"])
+            self.canvas.pack()
+            self._photo = None
+            self._img_id = None
+        self.rebuild()
+
+    def rebuild(self) -> None:
+        cfg = self.app.cfg
+        self.r = int(cfg["inner_radius"])
+        self.dead = float(cfg.get("dead_zone", self.r * 0.7))
+        self.animate = bool(cfg.get("animations", True))
+        self.hover_ms = float(cfg.get("hover_open_ms", 450))
+        if self.visible:
+            self.hide()
+        self.root_layer = Layer(cfg, cfg["items"], "MIRA", ["MIRA.SYS"], 0)
+        self._profile_layers: dict = {}
+
+    def profile_layer(self, prof: dict | None) -> Layer:
+        if prof is None:
+            return self.root_layer
+        name = prof["name"]
+        if name not in self._profile_layers:
+            self._profile_layers[name] = Layer(self.app.cfg, prof["items"], name,
+                                               [f"MIRA.SYS @ {name}"], 0)
+        return self._profile_layers[name]
+
+    @property
+    def layer(self) -> Layer:
+        return self.stack[-1]
+
+    @property
+    def depth(self) -> int:
+        return len(self.stack) - 1
+
+    # --- camadas ---
+    def _enter(self, layer: Layer) -> None:
+        self.stack.append(layer)
+        self._place()
+
+    def push(self, layer_items, title: str) -> None:
+        crumbs = self.layer.crumbs + [title]
+        self._enter(Layer(self.app.cfg, layer_items, title, crumbs, len(self.stack)))
+
+    def pop(self) -> bool:
+        if len(self.stack) <= 1:
+            return False
+        self.stack.pop()
+        self._place()
+        return True
+
+    def _place(self) -> None:
+        """Posiciona a camada atual e reinicia a animação de abertura."""
+        self.size = self.layer.renderer.size
+        vx, vy, vw, vh = virtual_screen(self.app.root)
+        half = self.size // 2
+        x = max(vx + half, min(self.anchor[0], vx + vw - half))
+        y = max(vy + half, min(self.anchor[1], vy + vh - half))
+        self.center = (x, y)
+        self.origin = (x - half, y - half)
+        self.t0 = time.monotonic()
+        self._last = None
+        # só começa a contar o "passar o mouse" depois que o cursor mudar de fatia,
+        # senão uma pasta dentro de outra abriria sozinha em cascata
+        self.update_selection()
+        self.arm_sel = self.selected
+        self.armed = self.selected is None
+        self.dwell_sel = None
+        self.dwell_t0 = 0.0
+        if not IS_WIN and self.visible:
+            self.canvas.configure(width=self.size, height=self.size)
+            self.win.geometry(f"{self.size}x{self.size}+{self.origin[0]}+{self.origin[1]}")
+
+    # --- exibir / esconder ---
+    def show_at(self, x: int, y: int, root: "Layer | None" = None) -> None:
+        self.anchor = (x, y)
+        self.stack = [root or self.root_layer]
+        self._place()
+        self._render(0.0)  # se falhar, a roda não fica "meio aberta"
+        self.visible = True
+        if IS_WIN:
+            _user32.ShowWindow(self.hwnd, 4)  # SW_SHOWNOACTIVATE
+            # HWND_TOPMOST, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+            _user32.SetWindowPos(self.hwnd, wintypes.HWND(-1), 0, 0, 0, 0, 0x13)
+        else:
+            self.canvas.configure(width=self.size, height=self.size)
+            self.win.geometry(f"{self.size}x{self.size}+{self.origin[0]}+{self.origin[1]}")
+            self.win.deiconify()
+            self.win.lift()
+        self._job = self.app.root.after(self.FRAME_MS, self._tick)
+
+    def hide(self) -> None:
+        self.visible = False
+        self.stack = []
+        if self._job:
+            self.app.root.after_cancel(self._job)
+            self._job = None
+        if IS_WIN:
+            _user32.ShowWindow(self.hwnd, 0)
+        else:
+            self.win.withdraw()
+
+    def update_selection(self) -> int | None:
+        px, py = cursor_pos(self.app.root)
+        dx, dy = px - self.center[0], py - self.center[1]
+        self.dist = math.hypot(dx, dy)
+        self.selected = slice_at(dx, dy, len(self.layer.items), self.dead)
+        return self.selected
+
+    def _render(self, progress: float) -> None:
+        t = time.monotonic() - self.t0
+        opening = min(1.0, t / self.OPEN_S)
+        state = (id(self.layer), self.selected, opening >= 1.0, round(progress, 2))
+        if not self.animate and state == self._last:
+            return  # nada mudou
+        self._last = state
+        img = self.layer.renderer.frame(self.selected, t, opening, self.animate, progress)
+        if IS_WIN:
+            update_layered(self.hwnd, img, *self.origin)
+        else:
+            bg = Image.new("RGBA", img.size, self.app.cfg["background"])
+            bg.alpha_composite(img)
+            self._photo = ImageTk.PhotoImage(bg)
+            if self._img_id is None:
+                self._img_id = self.canvas.create_image(0, 0, anchor="nw", image=self._photo)
+            else:
+                self.canvas.itemconfigure(self._img_id, image=self._photo)
+
+    def _hover_progress(self) -> float:
+        """Abre a subcamada ao parar o mouse sobre ela (ou empurrar para fora da roda)."""
+        sel = self.selected
+        if not self.armed and sel != self.arm_sel:
+            self.armed = True
+        item = self.layer.items[sel] if sel is not None else None
+        if not (self.armed and item is not None and neon.is_branch(item)):
+            self.dwell_sel = None
+            return 0.0
+        if self.dist > self.layer.renderer.R + 45:  # "empurrou" para fora: abre na hora
+            return 1.0
+        if self.hover_ms <= 0:
+            return 0.0
+        now = time.monotonic()
+        if sel != self.dwell_sel:
+            self.dwell_sel, self.dwell_t0 = sel, now
+        return (now - self.dwell_t0) * 1000 / self.hover_ms
+
+    def _tick(self) -> None:
+        if not self.visible:
+            return
+        self.update_selection()
+        progress = self._hover_progress()
+        if progress >= 1.0:
+            self.app.activate(self.layer.items[self.selected])
+            if not self.visible:
+                return
+            progress = 0.0
+        try:
+            self._render(progress)
+        except Exception:
+            log.exception("falha ao desenhar a roda")
+        self._job = self.app.root.after(self.FRAME_MS, self._tick)
+
+
+# --------------------------------------------------------------------------
+# Aplicativo
+# --------------------------------------------------------------------------
+class App:
+    def __init__(self):
+        self.root = tk.Tk()
+        self.root.withdraw()
+        self.root.title(APP_NAME)
+        self.events: queue.Queue = queue.Queue()
+        self.cfg = load_config()
+        self.trigger = TRIGGERS[self.cfg["trigger"]]
+        self.wheel = Wheel(self)
+        self.wheel_open = False  # lido pela thread do hook
+        self.snipping = False
+        self.ignore_up = False
+        self._swallow: set[int] = set()
+        self.tray = None
+        self.update_info = None
+        self.updating = False
+        self._init_clipboard()
+        self._start_listeners()
+        self._start_tray()
+        self.root.after(10, self._poll)
+
+    # --- entrada global ---
+    def _start_listeners(self):
+        if IS_WIN:
+            self.mouse_listener = mouse.Listener(win32_event_filter=self._win32_filter)
+        else:
+            self.mouse_listener = mouse.Listener(on_click=self._on_click_generic)
+        self.mouse_listener.start()
+        if IS_WIN:
+            self.kb_listener = keyboard.Listener(on_press=self._on_key,
+                                                 win32_event_filter=self._kb_filter)
+        else:
+            self.kb_listener = keyboard.Listener(on_press=self._on_key)
+        self.kb_listener.start()
+
+    def _win32_filter(self, msg, data):
+        kind, num = self.trigger
+        is_trigger = False
+        if kind == "x" and msg in (WM_XBUTTONDOWN, WM_XBUTTONUP):
+            is_trigger = ((data.mouseData >> 16) & 0xFFFF) == num
+        elif kind == "m" and msg in (WM_MBUTTONDOWN, WM_MBUTTONUP):
+            is_trigger = True
+        if is_trigger:
+            down = msg in (WM_XBUTTONDOWN, WM_MBUTTONDOWN)
+            self.events.put(("trigger_down" if down else "trigger_up", None))
+            self.mouse_listener.suppress_event()  # impede o "Voltar" do navegador
+        if msg in self._swallow:
+            self._swallow.discard(msg)
+            self.mouse_listener.suppress_event()
+        if self.wheel_open and msg in (WM_LBUTTONDOWN, WM_RBUTTONDOWN):
+            self.events.put(("click", "left" if msg == WM_LBUTTONDOWN else "right"))
+            self._swallow.add(msg + 1)  # engole também o "soltar" correspondente
+            self.mouse_listener.suppress_event()
+
+    def _on_click_generic(self, x, y, button, pressed):
+        names = {"mouse4": ("x1", "button8"), "mouse5": ("x2", "button9"), "middle": ("middle",)}
+        targets = [getattr(mouse.Button, n) for n in names[self.cfg["trigger"]]
+                   if hasattr(mouse.Button, n)]
+        if button in targets:
+            self.events.put(("trigger_down" if pressed else "trigger_up", None))
+        elif self.wheel_open and pressed and button in (mouse.Button.left, mouse.Button.right):
+            self.events.put(("click", "left" if button == mouse.Button.left else "right"))
+
+    def _kb_filter(self, msg, data):
+        # PrtSc abre o recorte (e não o recorte do Windows), como no Lightshot
+        if data.vkCode == 0x2C and self.cfg.get("print_screen", True):
+            if msg in (0x0100, 0x0104):  # WM_KEYDOWN, WM_SYSKEYDOWN
+                shift = _user32.GetAsyncKeyState(0x10) & 0x8000  # Shift+PrtSc = copiar texto
+                self.events.put(("ocr_key" if shift else "print_screen", None))
+            self.kb_listener.suppress_event()
+
+    def _on_key(self, key):
+        if key == keyboard.Key.esc and self.wheel_open:
+            self.events.put(("esc", None))
+        elif (not IS_WIN and key == keyboard.Key.print_screen
+              and self.cfg.get("print_screen", True)):
+            self.events.put(("print_screen", None))
+
+    # --- bandeja do sistema ---
+    def _start_tray(self):
+        try:
+            import pystray
+        except Exception:
+            log.info("pystray indisponível; sem ícone na bandeja", exc_info=True)
+            return
+        put = lambda ev: (lambda icon, item: self.events.put((ev, None)))  # noqa: E731
+        items = [
+            pystray.MenuItem("Abrir roda", put("open_center"), default=True),
+            pystray.MenuItem("Editar atalhos (config.json)", put("edit_config")),
+            pystray.MenuItem("Recarregar atalhos", put("reload")),
+        ]
+        if IS_WIN:
+            items.append(pystray.MenuItem("Iniciar com o Windows", put("toggle_startup"),
+                                          checked=lambda item: startup_enabled()))
+        items += [
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                lambda item: (f"⬆ Atualizar para o build {self.update_info['build']}"
+                              if self.update_info else ""),
+                put("start_update"), visible=lambda item: self.update_info is not None),
+            pystray.MenuItem("Procurar atualização", put("check_update")),
+            pystray.MenuItem(f"Mira build {atualizar.BUILD}" if atualizar.BUILD
+                             else "Mira (versão de desenvolvimento)", None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Sair", put("quit")),
+        ]
+        self.tray = pystray.Icon(APP_NAME, neon.tray_image(self.cfg["neon"], self.cfg["accent"]),
+                                 f"{APP_NAME} — roda de atalhos", pystray.Menu(*items))
+        self.tray.run_detached()
+
+    # --- laço de eventos ---
+    def _poll(self):
+        try:
+            while True:
+                ev, arg = self.events.get_nowait()
+                try:
+                    self._handle(ev, arg)
+                except Exception as e:
+                    log.exception("erro tratando %s", ev)
+                    self.toast(f"Erro: {e}", error=True)
+        except queue.Empty:
+            pass
+        self.root.after(10, self._poll)
+
+    def _open_wheel(self, x, y):
+        prof = None
+        if self.cfg["profiles"]:
+            exe, title = foreground_app()
+            prof = match_profile(self.cfg["profiles"], exe, title)
+        self.wheel.show_at(x, y, self.wheel.profile_layer(prof))
+        self.wheel_open = True
+
+    def _close_wheel(self):
+        self.wheel_open = False
+        self.wheel.hide()
+
+    def _handle(self, ev, arg):
+        if ev == "trigger_down":
+            if self.snipping:
+                return
+            if self.wheel.visible:  # apertou de novo com a roda aberta: fecha
+                self._close_wheel()
+                self.ignore_up = True
+                return
+            self._open_wheel(*cursor_pos(self.root))
+        elif ev == "trigger_up":
+            if self.ignore_up:
+                self.ignore_up = False
+                return
+            if self.wheel.visible:
+                sel = self.wheel.update_selection()
+                if sel is not None:
+                    self.activate(self.wheel.layer.items[sel])
+                # sem seleção (clique rápido): a roda fica aberta para clicar
+        elif ev == "click":
+            if not self.wheel.visible:
+                return
+            sel = self.wheel.update_selection()
+            if arg == "left" and sel is not None:
+                self.activate(self.wheel.layer.items[sel])
+            elif not self.wheel.pop():  # centro / botão direito: volta uma camada
+                self._close_wheel()
+        elif ev == "esc":
+            self._close_wheel()
+        elif ev == "print_screen":
+            if self.wheel.visible:
+                self._close_wheel()
+            self.root.after(60, self.start_snip)
+        elif ev == "open_center":
+            self._open_wheel(self.root.winfo_screenwidth() // 2, self.root.winfo_screenheight() // 2)
+        elif ev == "edit_config":
+            open_target(str(CONFIG_PATH))
+        elif ev == "reload":
+            self.reload()
+        elif ev == "toggle_startup":
+            set_startup(not startup_enabled())
+            self.toast("Mira vai iniciar com o Windows" if startup_enabled()
+                       else "Mira não inicia mais com o Windows")
+            if self.tray:
+                self.tray.update_menu()
+        elif ev == "quit":
+            self.quit()
+        elif ev == "ocr_done":
+            self._ocr_done(arg)
+        elif ev == "ocr_error":
+            self.toast(f"OCR: {arg}", error=True, ms=6000)
+        elif ev == "ocr_key":
+            if self.wheel.visible:
+                self._close_wheel()
+            self.root.after(60, lambda: self.start_snip(ocr_mode=True))
+        elif ev == "check_update":
+            self.check_update(manual=True)
+        elif ev == "update_checked":
+            self._on_update_checked(*arg)
+        elif ev == "start_update":
+            self.start_update()
+        elif ev == "update_ready":
+            self._finish_update()
+        elif ev == "update_error":
+            self.updating = False
+            self.toast(f"Atualização falhou: {arg}", error=True, ms=6000)
+
+    # --- histórico do Ctrl+C ---
+    def _init_clipboard(self):
+        save = BASE_DIR / "copiados.json" if self.cfg.get("clipboard_save") else None
+        self.clips = copiados.ClipboardHistory(self.cfg.get("clipboard_max", 25), save)
+        if self.cfg.get("clipboard_history", True) and not getattr(self, "_clip_polling", False):
+            self._clip_polling = True
+            self.root.after(500, self._poll_clipboard)
+
+    def _poll_clipboard(self):
+        if not self.cfg.get("clipboard_history", True):
+            self._clip_polling = False
+            return
+        self.clips.poll(self.root)
+        self.root.after(500, self._poll_clipboard)
+
+    def clip_items(self, offset: int) -> list[dict]:
+        size = int(self.cfg["icon_size"])
+
+        def convert(entry):
+            it = {"name": entry.label(), "icon": entry.icon(), "type": "paste", "_clip": entry}
+            if entry.kind == "image":
+                thumb = entry.image.copy()
+                thumb.thumbnail((size, size))
+                it["_icon_img"] = thumb.convert("RGBA")
+            return it
+
+        return paginate(
+            list(self.clips.entries), offset,
+            [{"name": "Limpar", "icon": "🧹", "type": "clip_clear"}], convert,
+            lambda nxt, left: {"name": f"Mais ({left})", "icon": "⏩", "type": "clipboard",
+                               "offset": nxt}) if self.clips.entries else []
+
+    def paste_clip(self, entry):
+        """Põe o item de volta na área de transferência e aperta Ctrl+V no app da frente."""
+        try:
+            ok = (copiados.write_text(entry.text) if entry.kind == "text"
+                  else copy_image_to_clipboard(entry.image))
+            if not ok and not IS_WIN and entry.kind == "text":
+                self.root.clipboard_clear()
+                self.root.clipboard_append(entry.text)
+                ok = True
+            if not ok:
+                raise OSError("a área de transferência está ocupada")
+            self.clips.use(entry)
+            self.root.after(60, lambda: send_keys("ctrl+v"))
+        except Exception as e:
+            log.exception("falha ao colar")
+            self.toast(f"Não deu para colar: {e}", error=True)
+
+    def reload(self):
+        try:
+            self.cfg = load_config()
+        except Exception as e:
+            self.toast(f"config.json inválido: {e}", error=True, ms=5000)
+            return
+        self.trigger = TRIGGERS[self.cfg["trigger"]]
+        old = self.clips.entries
+        self._init_clipboard()
+        self.clips.entries = old or self.clips.entries
+        self.wheel.rebuild()
+        self.toast(f"Atalhos recarregados ({len(self.cfg['items'])} itens)")
+        self._announce_migration()
+
+    def activate(self, item: dict):
+        """Abre a subcamada do item ou executa a ação dele."""
+        kind = item.get("type")
+        if kind == "paste":
+            self._close_wheel()
+            self.root.after(120, lambda: self.paste_clip(item["_clip"]))
+            return
+        if kind == "clip_clear":
+            self.clips.clear()
+            self._close_wheel()
+            self.toast("Histórico do Ctrl+C apagado")
+            return
+        if kind in ("menu", "folder", "games", "clipboard", "default"):
+            try:
+                if kind == "menu":
+                    self.wheel.push(item["items"], item["name"])
+                elif kind == "default":
+                    self.wheel.push(self.cfg["items"], item["name"])
+                elif kind == "clipboard":
+                    items = self.clip_items(int(item.get("offset", 0)))
+                    if not items:
+                        self.toast("Nada copiado ainda. Copie algo com Ctrl+C!")
+                        return
+                    title = item["name"] if not item.get("offset") else self.wheel.layer.title
+                    self.wheel.push(items, title)
+                elif kind == "games":
+                    items = game_items(item, int(item.get("offset", 0)),
+                                       int(self.cfg["icon_size"]))
+                    if not items:
+                        self.toast("Nenhum jogo encontrado (Steam, Epic ou Riot).", error=True)
+                        return
+                    title = item["name"] if not item.get("offset") else self.wheel.layer.title
+                    self.wheel.push(items, title)
+                else:
+                    path = resolve_path(item["path"])
+                    items = folder_items(path, int(item.get("offset", 0)),
+                                         int(self.cfg["icon_size"]))
+                    title = item["name"] if not item.get("offset") else self.wheel.layer.title
+                    self.wheel.push(items, title)
+            except OSError as e:
+                self.toast(f"Não deu para abrir '{item.get('name')}': {e.strerror or e}",
+                           error=True, ms=3500)
+            return
+        if item.get("stay"):  # ex.: volume — a roda continua aberta
+            self.run_action(item)
+            return
+        self._close_wheel()
+        # pequena pausa para a roda sumir antes da ação (importante p/ prints)
+        self.root.after(120, lambda: self.run_action(item))
+
+    def run_action(self, item: dict):
+        kind = item.get("type", "open")
+        log.info("ação %s (%s)", item.get("name"), kind)
+        try:
+            if kind == "open":
+                open_target(str(item["target"]), item.get("args"))
+            elif kind == "command":
+                subprocess.Popen(item["command"], shell=True)
+            elif kind == "keys":
+                send_keys(item["keys"])
+            elif kind == "snip":
+                self.start_snip()
+            elif kind == "ocr":
+                self.start_snip(ocr_mode=True)
+            elif kind == "screenshot":
+                img = ImageGrab.grab(all_screens=True) if IS_WIN else ImageGrab.grab()
+                self._deliver(img)
+            else:
+                raise ValueError(f"tipo desconhecido: {kind!r}")
+        except KeyError as e:
+            self.toast(f"'{item.get('name')}': falta o campo {e} no config.json", error=True)
+        except Exception as e:
+            log.exception("falha na ação")
+            self.toast(f"'{item.get('name')}' falhou: {e}", error=True, ms=4000)
+
+    def start_snip(self, ocr_mode: bool = False):
+        if self.snipping:
+            return
+        self.snipping = True
+        try:
+            shot = ImageGrab.grab(all_screens=True) if IS_WIN else ImageGrab.grab()
+            recorte.Snipper(self.root, self.cfg, shot, virtual_screen(self.root),
+                            cursor_pos(self.root), self._snip_done, ocr_mode=ocr_mode)
+        except Exception:
+            self.snipping = False
+            raise
+
+    def _snip_done(self, img, action):
+        self.snipping = False
+        if img is None:
+            return
+        if action == "copy":
+            if copy_image_to_clipboard(img):
+                self.toast("Imagem copiada — é só colar com Ctrl+V")
+            else:
+                self._deliver(img)
+        elif action == "save":
+            self._save_as(img)
+        elif action == "ocr":
+            self.run_ocr(img)
+        else:
+            self._deliver(img)
+
+    def run_ocr(self, img: Image.Image):
+        self.toast("Lendo o texto…", ms=1800)
+
+        def worker():
+            try:
+                self.events.put(("ocr_done", ocr.extract_text(img)))
+            except ocr.OcrError as e:
+                self.events.put(("ocr_error", str(e)))
+            except Exception as e:
+                log.exception("falha no OCR")
+                self.events.put(("ocr_error", str(e)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _ocr_done(self, text: str):
+        if not text:
+            self.toast("Não achei texto nessa área.", error=True)
+            return
+        if not copiados.write_text(text):
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+        preview = text if len(text) <= 140 else text[:140] + "…"
+        self.toast(f"Texto copiado ({len(text)} caracteres) — é só colar:\n{preview}", ms=5000)
+
+    def _save_as(self, img: Image.Image):
+        folder = Path(resolve_path(self.cfg["screenshot_folder"]))
+        folder.mkdir(parents=True, exist_ok=True)
+        # janelinha "topmost" para a caixa de salvar não abrir atrás do jogo
+        owner = tk.Toplevel(self.root)
+        owner.overrideredirect(True)
+        owner.attributes("-topmost", True)
+        owner.geometry("1x1+0+0")
+        owner.focus_force()
+        try:
+            path = filedialog.asksaveasfilename(
+                parent=owner, title="Salvar recorte", initialdir=str(folder),
+                initialfile=f"Mira_{datetime.now():%Y-%m-%d_%H-%M-%S}.png",
+                defaultextension=".png",
+                filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg *.jpeg"), ("Todos", "*.*")])
+        finally:
+            owner.destroy()
+        if not path:
+            return
+        out = img.convert("RGB") if path.lower().endswith((".jpg", ".jpeg")) else img
+        out.save(path)
+        self.toast(f"Salvo em\n{path}", on_click=lambda: open_target(path))
+
+    def _deliver(self, img: Image.Image):
+        folder = Path(resolve_path(self.cfg["screenshot_folder"]))
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"Mira_{datetime.now():%Y-%m-%d_%H-%M-%S}.png"
+        img.save(path)
+        copied = copy_image_to_clipboard(img)
+        msg = f"Imagem {'copiada e ' if copied else ''}salva em\n{path}"
+        self.toast(msg, on_click=lambda: open_target(str(path)))
+
+    # --- avisos ---
+    def toast(self, text: str, error: bool = False, ms: int = 2600, on_click=None):
+        line = self.cfg["accent"] if error else self.cfg["neon"]
+        bg = "#07070f"
+        w = tk.Toplevel(self.root)
+        w.overrideredirect(True)
+        w.attributes("-topmost", True)
+        w.attributes("-alpha", 0.94)
+        border = tk.Frame(w, bg=line, padx=1, pady=1)
+        border.pack()
+        body = tk.Frame(border, bg=bg)
+        body.pack()
+        tk.Frame(body, bg=line, width=4).pack(side="left", fill="y")
+        box = tk.Frame(body, bg=bg, padx=14, pady=8)
+        box.pack(side="left")
+        tk.Label(box, text=("MIRA.SYS // ERRO" if error else "MIRA.SYS // OK"), bg=bg, fg=line,
+                 font=("Consolas", 8, "bold"), anchor="w").pack(fill="x")
+        lbl = tk.Label(box, text=text, bg=bg, fg=self.cfg["text_color"], font=("Consolas", 10),
+                       justify="left", anchor="w", wraplength=420)
+        lbl.pack(fill="x")
+        if on_click:
+            for wid in (box, lbl):
+                wid.configure(cursor="hand2")
+                wid.bind("<Button-1>", lambda e: (on_click(), w.destroy()))
+        w.update_idletasks()
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        w.geometry(f"+{sw - w.winfo_width() - 24}+{sh - w.winfo_height() - 64}")
+        make_noactivate(w)
+        w.after(ms, w.destroy)
+
+    def quit(self):
+        try:
+            self.mouse_listener.stop()
+            self.kb_listener.stop()
+            if self.tray:
+                self.tray.stop()
+        finally:
+            self.root.destroy()
+
+    def run(self):
+        log.info("Mira iniciado (gatilho: %s, build %s)", self.cfg["trigger"], atualizar.BUILD)
+        self.toast(f"Mira ativo — segure o {self.cfg['trigger'].replace('mouse', 'Mouse ')} "
+                   "para abrir a roda")
+        self._announce_migration()
+        if FROZEN:
+            atualizar.cleanup_old(Path(sys.executable))
+        if self.cfg.get("update_check", True):
+            self.root.after(8000, self.check_update)
+        self.root.mainloop()
+
+    def _announce_migration(self):
+        added, notes = self.cfg.get("_migration", ([], []))
+        if added:
+            self.root.after(2800, lambda: self.toast(
+                "Novidades na roda: " + ", ".join(added), ms=7000))
+        if notes:
+            self.root.after(2800, lambda: self.toast("; ".join(notes), error=True, ms=7000))
+
+    # --- atualização automática ---
+    def check_update(self, manual: bool = False):
+        if self.cfg.get("update_check", True) and not manual:
+            self.root.after(6 * 3600 * 1000, self.check_update)  # de novo em 6 horas
+        if not FROZEN:
+            if manual:
+                self.toast("A atualização automática só funciona no Mira.exe.")
+            return
+
+        def worker():
+            try:
+                info = atualizar.latest_release()
+                self.events.put(("update_checked", (info, manual)))
+            except Exception as e:
+                log.info("não deu para procurar atualização: %s", e)
+                if manual:
+                    self.events.put(("update_error", f"sem conexão com o GitHub ({e})"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_checked(self, info, manual):
+        if atualizar.is_newer(info):
+            self.update_info = info
+            if self.tray:
+                self.tray.update_menu()
+            self.toast(f"Nova versão do Mira (build {info['build']}). Clique aqui para atualizar.",
+                       ms=15000, on_click=self.start_update)
+        elif manual:
+            self.toast(f"Você já está na versão mais nova (build {atualizar.BUILD}).")
+
+    def start_update(self):
+        if self.updating or not self.update_info:
+            return
+        self.updating = True
+        info = self.update_info
+        exe = Path(sys.executable)
+        self.toast(f"Baixando o Mira build {info['build']}…", ms=4000)
+
+        def worker():
+            try:
+                atualizar.download(info, exe.with_name(exe.stem + ".new" + exe.suffix))
+                self.events.put(("update_ready", None))
+            except Exception as e:
+                log.exception("falha ao baixar a atualização")
+                self.events.put(("update_error", str(e)))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_update(self):
+        exe = Path(sys.executable)
+        try:
+            atualizar.swap_exe(exe, exe.with_name(exe.stem + ".new" + exe.suffix))
+        except OSError as e:
+            self.updating = False
+            self.toast(f"Não deu para trocar o Mira.exe: {e}", error=True, ms=6000)
+            return
+        log.info("atualizado para o build %s; reabrindo", self.update_info["build"])
+        release_single_instance()
+        subprocess.Popen([str(exe), "--updated"], cwd=str(exe.parent))
+        self.quit()
+
+
+_MUTEX = None
+
+
+def release_single_instance() -> None:
+    """Solta a trava de "um Mira só" (usado ao reabrir depois de atualizar)."""
+    global _MUTEX
+    if IS_WIN and _MUTEX:
+        _kernel32.CloseHandle(_MUTEX)
+        _MUTEX = None
+
+
+def main():
+    global _MUTEX
+    if IS_WIN:
+        _ole32.CoInitialize(None)  # necessário para os ícones de arquivos
+        # logo depois de uma atualização, o Mira antigo ainda pode estar fechando
+        for _ in range(25 if "--updated" in sys.argv else 1):
+            _MUTEX = _kernel32.CreateMutexW(None, False, "Local\\MiraRodaDeAtalhos")
+            if ctypes.get_last_error() != 183:  # ERROR_ALREADY_EXISTS
+                break
+            _kernel32.CloseHandle(_MUTEX)
+            _MUTEX = None
+            time.sleep(0.2)
+        else:
+            r = tk.Tk()
+            r.withdraw()
+            messagebox.showinfo(APP_NAME, "O Mira já está rodando (veja o ícone perto do relógio).")
+            return
+    try:
+        app = App()
+    except Exception as e:
+        log.exception("falha ao iniciar")
+        r = tk.Tk()
+        r.withdraw()
+        messagebox.showerror(APP_NAME, f"Não foi possível iniciar o Mira:\n\n{e}")
+        return
+    app.run()
+
+
+if __name__ == "__main__":
+    main()
