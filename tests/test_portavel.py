@@ -47,7 +47,7 @@ def test_blur_pixelates_only_inside():
     out = recorte.render(base, annos, (0, 0), 1.0).convert("RGB")
     block = recorte.blur_block(4)
     inside = out.crop((10, 10, 10 + block, 10 + block))
-    assert len(set(inside.getdata())) <= 2  # virou blocos
+    assert len(inside.getcolors(256)) <= 2  # virou blocos
     assert out.getpixel((150, 100)) == base.getpixel((150, 100))  # fora não mudou
 
 

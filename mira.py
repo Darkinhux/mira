@@ -284,13 +284,18 @@ WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW = 0x08000000, 0x00000080
 
 
 def toplevel_hwnd(win: tk.Toplevel):
-    return _user32.GetParent(win.winfo_id()) or win.winfo_id()
+    """HWND da moldura da janela. (GetParent numa janela popup devolveria a janela
+    "dona", não a própria — por isso usamos o wm_frame do Tk.)"""
+    win.update_idletasks()
+    return int(win.wm_frame(), 16)
 
 
 def make_layered(hwnd) -> None:
     style = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
     _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT
                            | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+    if not _user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_LAYERED:
+        raise OSError(f"não deu para deixar a janela {hwnd:#x} transparente")
 
 
 def update_layered(hwnd, img: Image.Image, x: int, y: int) -> None:
@@ -341,8 +346,7 @@ def make_noactivate(win: tk.Toplevel) -> None:
     if not IS_WIN:
         return
     try:
-        hwnd = _user32.GetParent(win.winfo_id()) or win.winfo_id()
-        GWL_EXSTYLE, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW = -20, 0x08000000, 0x00000080
+        hwnd = toplevel_hwnd(win)
         style = _user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
         _user32.SetWindowLongW(hwnd, GWL_EXSTYLE, style | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
     except Exception:
@@ -768,8 +772,8 @@ class Wheel:
         self.anchor = (x, y)
         self.stack = [self.root_layer]
         self._place()
+        self._render(0.0)  # se falhar, a roda não fica "meio aberta"
         self.visible = True
-        self._render(0.0)
         if IS_WIN:
             _user32.ShowWindow(self.hwnd, 4)  # SW_SHOWNOACTIVATE
             # HWND_TOPMOST, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
