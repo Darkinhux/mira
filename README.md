@@ -9,11 +9,29 @@ scanlines, pulso na opção escolhida e um glitch rápido quando a roda abre.
 
 - **Segurar e soltar:** segure o Mouse 4, mova o mouse na direção do atalho e solte.
 - **Clique rápido:** um toque no Mouse 4 deixa a roda aberta; aí é só clicar no atalho.
-- **Fechar:** `Esc`, botão direito, clicar no centro ou apertar o Mouse 4 de novo.
+- **Camadas:** itens com uma setinha (▸) abrem mais opções. É só **parar o mouse em cima**
+  (uma barrinha enche e a camada abre), **clicar**, ou **empurrar o mouse para fora** da roda.
+  Dá para ir descendo segurando o Mouse 4 o tempo todo e soltar no que quiser.
+- **Voltar uma camada:** clique no centro ou use o botão direito.
+- **Fechar:** `Esc` ou apertar o Mouse 4 de novo.
 - O Mouse 4 deixa de funcionar como "Voltar" no navegador enquanto o Mira estiver aberto.
 
-Atalhos que já vêm prontos: Steam, Discord, recorte de tela, print da tela inteira,
-navegador, explorador de arquivos, play/pause de música e gerenciador de tarefas.
+O que já vem pronto:
+
+| Item         | Abre                                                                        |
+|--------------|-----------------------------------------------------------------------------|
+| Steam ▸      | Abrir Steam, Biblioteca, Loja, Amigos, Downloads                            |
+| Discord      | —                                                                           |
+| Recortar     | Recorte de uma área da tela                                                 |
+| Tela inteira | Print de todas as telas                                                     |
+| Navegador ▸  | Google, YouTube, Twitch, WhatsApp, Gmail                                    |
+| Arquivos ▸   | Área de Trabalho, Downloads, Documentos, Imagens, Vídeos, Músicas, Prints, Disco C: — e dentro de cada uma, as pastas e arquivos que estão lá |
+| Mídia ▸      | Play/Pause, Próxima, Anterior, Volume +/-, Mudo (a roda fica aberta para apertar várias vezes) |
+| Sistema ▸    | Gerenciador de Tarefas, Configurações, Bloquear, Lixeira, Desligar          |
+
+Nas pastas, as subpastas vêm primeiro e cada uma abre outra camada. Arquivos e atalhos
+aparecem com o ícone de verdade (o mesmo do Explorador). A primeira opção, **Abrir pasta**,
+abre a pasta no Explorador, e se tiver muita coisa aparece **Mais (N)** para a próxima página.
 
 ## Instalação (Windows 10/11)
 
@@ -34,7 +52,7 @@ que aparece para abrir a imagem. `Esc` ou o botão direito cancelam.
 ## Personalizar os atalhos
 
 Clique com o botão direito no ícone perto do relógio → **Editar atalhos**, mude o
-`config.json` e depois → **Recarregar atalhos**. A roda aceita de 2 a 12 itens.
+`config.json` e depois → **Recarregar atalhos**. Cada camada aceita até 12 itens.
 
 ```json
 { "name": "Spotify",  "icon": "🎵", "type": "open",  "target": "spotify:" }
@@ -42,10 +60,21 @@ Clique com o botão direito no ícone perto do relógio → **Editar atalhos**, 
   "args": ["--launch-product=valorant", "--launch-patchline=live"] }
 { "name": "YouTube",  "icon": "▶️", "type": "open",  "target": "https://youtube.com" }
 { "name": "Mutar",    "icon": "🔇", "type": "keys",  "keys": "media_volume_mute" }
-{ "name": "Bloquear", "icon": "🔒", "type": "keys",  "keys": "win+l" }
+{ "name": "Bloquear", "icon": "🔒", "type": "command", "command": "rundll32.exe user32.dll,LockWorkStation" }
 { "name": "Desligar", "icon": "⏻",  "type": "command", "command": "shutdown /s /t 60" }
 { "name": "Recortar", "icon": "✂️", "type": "snip" }
 { "name": "Print",    "icon": "🖥️", "type": "screenshot" }
+{ "name": "Jogos",    "icon": "🕹️", "type": "folder", "path": "D:\\Jogos" }
+{ "name": "Volume +", "icon": "🔊", "type": "keys", "keys": "media_volume_up", "stay": true }
+```
+
+Um submenu é um item `menu` com os próprios `items` dentro (pode ter menu dentro de menu):
+
+```json
+{ "name": "Jogos", "icon": "🕹️", "type": "menu", "items": [
+    { "name": "CS2",       "icon": "🔫", "type": "open", "target": "steam://rungameid/730" },
+    { "name": "Minecraft", "icon": "auto", "type": "open", "target": "C:\\XboxGames\\Minecraft Launcher\\Content\\Minecraft.exe" }
+]}
 ```
 
 | `type`       | O que faz                                                              | Campos            |
@@ -55,9 +84,17 @@ Clique com o botão direito no ícone perto do relógio → **Editar atalhos**, 
 | `command`    | Roda um comando do Prompt                                              | `command`         |
 | `snip`       | Recorte de uma área da tela                                            | —                 |
 | `screenshot` | Print de todas as telas                                                | —                 |
+| `menu`       | Abre uma camada com mais itens                                         | `items`           |
+| `folder`     | Abre uma camada com as pastas e arquivos de uma pasta                  | `path`            |
 
-O `icon` pode ser um emoji ou o caminho de uma imagem (`.png`, `.ico`…), por exemplo
-`"icons/steam.png"`. Caminhos podem usar `%LOCALAPPDATA%` e afins.
+Qualquer item com `"stay": true` não fecha a roda depois de usado.
+
+Nos caminhos dá para usar `{desktop}`, `{downloads}`, `{documents}`, `{pictures}`,
+`{videos}` e `{music}`: o Mira acha a pasta certa mesmo se ela estiver no OneDrive.
+
+O `icon` pode ser um emoji, o caminho de uma imagem (`.png`, `.ico`…), por exemplo
+`"icons/steam.png"`, ou `"auto"` para usar o ícone do próprio programa do `target`.
+Caminhos podem usar `%LOCALAPPDATA%` e afins.
 
 Atalhos de jogos da Steam: `"target": "steam://rungameid/730"` (troque o número pelo ID do jogo).
 
@@ -72,7 +109,8 @@ Outras opções do `config.json` (troque as cores para criar seu tema — ex.: `
 | `accent`            | `#ff2a6d`           | Cor de destaque (opção escolhida, cantoneiras) |
 | `background`        | `#0b0b16`           | Cor de fundo das fatias                       |
 | `animations`        | `true`              | `false` desliga as animações (PC mais fraco)  |
-| `screenshot_folder` | `~/Pictures/Mira`   | Onde os prints são salvos                     |
+| `hover_open_ms`     | `450`               | Tempo parado em cima para abrir uma camada (`0` = só clicando) |
+| `screenshot_folder` | `{pictures}/Mira`   | Onde os prints são salvos                     |
 
 ## Problemas comuns
 

@@ -114,6 +114,19 @@ def fit_font(kind, text, max_w, start, minimum=9):
     return font(kind, size)
 
 
+def is_branch(item: dict) -> bool:
+    return item.get("type") in ("menu", "folder")
+
+
+def ellipsize(text: str, fnt, max_w: float) -> str:
+    if fnt.getlength(text) <= max_w:
+        return text
+    while text and fnt.getlength(text + "…") > max_w:
+        text = text[:-1]
+    return text.rstrip() + "…"
+
+
+@lru_cache(maxsize=512)
 def load_icon(spec: str, size: int) -> Image.Image | None:
     if not spec:
         return None
@@ -160,13 +173,21 @@ def ease_out(p):
 # --------------------------------------------------------------------------
 # a roda
 # --------------------------------------------------------------------------
+_RING_CACHE: dict = {}
+
+
 class NeonWheel:
     PAD = 54
 
-    def __init__(self, cfg: dict):
-        self.items = cfg["items"]
+    def __init__(self, cfg: dict, items: list | None = None, title: str = "MIRA",
+                 crumb: str = "MIRA.SYS", depth: int = 0):
+        self.items = cfg["items"] if items is None else items
         self.n = len(self.items)
-        self.R = int(cfg["radius"])
+        self.title = title
+        self.crumb = crumb
+        self.depth = depth
+        # camadas com muitos itens ficam um pouco maiores para caber os nomes
+        self.R = int(cfg["radius"]) + max(0, self.n - 8) * 8
         self.r = int(cfg["inner_radius"])
         self.icon_size = int(cfg["icon_size"])
         self.neon = rgb(cfg["neon"])
@@ -174,10 +195,14 @@ class NeonWheel:
         self.bg = rgb(cfg["background"])
         self.text = rgb(cfg["text_color"])
         self.size = 2 * (self.R + self.PAD)
-        self.icons = [load_icon(it.get("icon", ""), self.icon_size) for it in self.items]
+        self.icons = [it.get("_icon_img") or load_icon(it.get("icon", ""), self.icon_size)
+                      for it in self.items]
         self._static: dict = {}
         self._sel_glow: dict = {}
-        self.ring_a, self.ring_b = self._rings()
+        key = (self.size, self.R, self.neon, self.accent)
+        if key not in _RING_CACHE:
+            _RING_CACHE[key] = self._rings()
+        self.ring_a, self.ring_b = _RING_CACHE[key]
 
     # ---------- camadas estáticas (cacheadas por item selecionado) ----------
     def static(self, sel):
@@ -223,9 +248,23 @@ class NeonWheel:
                 edge = arc_pts(c, rout - 7 * k, a0 + step * 0.3, a1 - step * 0.3)
                 dl.line(edge, fill=neon + (70,), width=1 * k)
 
+        # setinha nas fatias que abrem uma subcamada
+        for i, item in enumerate(self.items):
+            if not is_branch(item):
+                continue
+            on = i == sel
+            rout = R + (12 * k if on else 0)
+            am = i * step
+            tip = polar(c, rout - 4 * k, am)
+            bl = polar(c, rout - 12 * k, am - 7 * k / rout)
+            br = polar(c, rout - 12 * k, am + 7 * k / rout)
+            col = (255, 255, 255, 255) if on else acc + (230,)
+            dg.polygon([tip, bl, br], fill=acc + (255,))
+            dl.polygon([tip, bl, br], fill=col)
+
         # núcleo
         df.ellipse(circle(c, r), fill=(4, 4, 10, 245))
-        core_col = acc if sel is not None else neon
+        core_col = acc if sel is not None or self.depth else neon
         dg.ellipse(circle(c, r), outline=core_col + (255,), width=6 * k)
         dl.ellipse(circle(c, r), outline=core_col + (255,), width=2 * k)
         for deg in range(0, 360, 15):
@@ -300,7 +339,9 @@ class NeonWheel:
                 glow_text(img, (x, iy), item["icon"][:2], font("display", 20),
                           white if on else self.neon, self.accent if on else self.neon)
             name = str(item["name"]).upper()
-            fnt = fit_font("mono", name, 2 * math.pi * rm / self.n - 14, 10, 7)
+            max_w = min(2 * math.pi * rm / self.n - 14, 120)
+            fnt = fit_font("mono", name, max_w, 10, 8)
+            name = ellipsize(name, fnt, max_w)
             ly = y + self.icon_size / 2 + 4
             if on:
                 glow_text(img, (x, ly), name, fnt, white, self.accent, radius=3)
@@ -310,11 +351,16 @@ class NeonWheel:
 
         # texto central
         if sel is not None:
-            title = str(self.items[sel]["name"]).upper()
-            sub, sub_col, glow = ">> EXECUTAR", self.accent, self.accent
+            item = self.items[sel]
+            title = str(item["name"]).upper()
+            sub = "▸ ABRIR CAMADA" if is_branch(item) else ">> EXECUTAR"
+            sub_col, glow = self.accent, self.accent
+        elif self.depth:
+            title, sub, sub_col, glow = self.title.upper(), "◂ VOLTAR", self.accent, self.accent
         else:
-            title, sub, sub_col, glow = "MIRA", "// SELECIONE", self.neon, self.neon
+            title, sub, sub_col, glow = self.title.upper(), "// SELECIONE", self.neon, self.neon
         fnt = fit_font("display", title, self.r * 2 - 22, 18, 9)
+        title = ellipsize(title, fnt, self.r * 2 - 18)
         glow_text(img, (c, c - 5), title, fnt, white, glow, radius=5)
         ImageDraw.Draw(img).text((c, c + 15), sub, font=font("mono", 8),
                                  fill=sub_col + (230,), anchor="mm")
@@ -322,8 +368,11 @@ class NeonWheel:
         # texto HUD nos cantos
         h = self.R + 40
         d = ImageDraw.Draw(img)
-        d.text((c - h + 30, c - h), "MIRA.SYS", font=font("mono", 9),
-               fill=self.neon + (170,), anchor="lm")
+        crumb = self.crumb.upper()
+        cf = font("mono", 9)
+        while len(crumb) > 4 and cf.getlength(crumb) > 2 * h - 70:
+            crumb = "…" + crumb[2:]
+        d.text((c - h + 30, c - h), crumb, font=cf, fill=self.neon + (170,), anchor="lm")
         d.text((c + h - 30, c + h), f"{self.n:02d} NODES", font=font("mono", 9),
                fill=self.neon + (170,), anchor="rm")
 
@@ -378,7 +427,8 @@ class NeonWheel:
         return ring_a.resize(size, Image.LANCZOS), b.resize(size, Image.LANCZOS)
 
     # ---------- quadro animado ----------
-    def frame(self, sel, t: float, opening: float = 1.0, animate: bool = True) -> Image.Image:
+    def frame(self, sel, t: float, opening: float = 1.0, animate: bool = True,
+              progress: float = 0.0) -> Image.Image:
         img = self.static(sel).copy()
         if animate:
             img.alpha_composite(self.ring_a.rotate(-t * 40, resample=Image.BILINEAR))
@@ -394,6 +444,16 @@ class NeonWheel:
             img.alpha_composite(self.ring_b)
             if sel is not None:
                 img.alpha_composite(self.sel_glow(sel))
+
+        if sel is not None and progress > 0:  # carregando a subcamada (passar o mouse)
+            c = self.size / 2
+            step = 2 * math.pi / self.n
+            a0 = sel * step - step / 2 + 0.03
+            a1 = a0 + (step - 0.06) * min(1.0, progress)
+            pts = arc_pts(c, self.R + 22, a0, a1)
+            d = ImageDraw.Draw(img)
+            d.line(pts, fill=self.accent + (150,), width=9, joint="curve")
+            d.line(pts, fill=(255, 255, 255, 255), width=3, joint="curve")
 
         if opening < 1.0 and animate:
             e = ease_out(max(0.0, opening))

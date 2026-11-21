@@ -17,11 +17,14 @@ import logging
 import math
 import os
 import queue
+import re
 import subprocess
 import sys
 import time
 import tkinter as tk
+import uuid
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from tkinter import messagebox
 
@@ -67,16 +70,60 @@ DEFAULT_CONFIG: dict = {
     "background": "#0b0b16",
     "text_color": "#e9fbff",
     "animations": True,
-    "screenshot_folder": "~/Pictures/Mira",
+    "hover_open_ms": 450,
+    "screenshot_folder": "{pictures}/Mira",
     "items": [
-        {"name": "Steam", "icon": "🎮", "type": "open", "target": "steam://open/main"},
+        {"name": "Steam", "icon": "🎮", "type": "menu", "items": [
+            {"name": "Abrir Steam", "icon": "🎮", "type": "open", "target": "steam://open/main"},
+            {"name": "Biblioteca", "icon": "📚", "type": "open", "target": "steam://open/games"},
+            {"name": "Loja", "icon": "🛒", "type": "open", "target": "steam://store"},
+            {"name": "Amigos", "icon": "👥", "type": "open", "target": "steam://open/friends"},
+            {"name": "Downloads", "icon": "⬇️", "type": "open",
+             "target": "steam://open/downloads"},
+        ]},
         {"name": "Discord", "icon": "💬", "type": "open", "target": "discord://"},
         {"name": "Recortar", "icon": "✂️", "type": "snip"},
         {"name": "Tela inteira", "icon": "🖥️", "type": "screenshot"},
-        {"name": "Navegador", "icon": "🌐", "type": "open", "target": "https://www.google.com"},
-        {"name": "Arquivos", "icon": "📁", "type": "open", "target": "explorer.exe"},
-        {"name": "Play/Pause", "icon": "⏯️", "type": "keys", "keys": "media_play_pause"},
-        {"name": "Gerenciador", "icon": "📊", "type": "keys", "keys": "ctrl+shift+esc"},
+        {"name": "Navegador", "icon": "🌐", "type": "menu", "items": [
+            {"name": "Google", "icon": "🔎", "type": "open", "target": "https://www.google.com"},
+            {"name": "YouTube", "icon": "▶️", "type": "open", "target": "https://www.youtube.com"},
+            {"name": "Twitch", "icon": "📺", "type": "open", "target": "https://www.twitch.tv"},
+            {"name": "WhatsApp", "icon": "📱", "type": "open", "target": "https://web.whatsapp.com"},
+            {"name": "Gmail", "icon": "✉️", "type": "open", "target": "https://mail.google.com"},
+        ]},
+        {"name": "Arquivos", "icon": "📁", "type": "menu", "items": [
+            {"name": "Área de Trabalho", "icon": "🖥️", "type": "folder", "path": "{desktop}"},
+            {"name": "Downloads", "icon": "⬇️", "type": "folder", "path": "{downloads}"},
+            {"name": "Documentos", "icon": "📄", "type": "folder", "path": "{documents}"},
+            {"name": "Imagens", "icon": "🖼️", "type": "folder", "path": "{pictures}"},
+            {"name": "Vídeos", "icon": "🎬", "type": "folder", "path": "{videos}"},
+            {"name": "Músicas", "icon": "🎵", "type": "folder", "path": "{music}"},
+            {"name": "Prints", "icon": "📸", "type": "folder", "path": "{pictures}/Mira"},
+            {"name": "Disco C:", "icon": "💽", "type": "folder", "path": "C:\\"},
+        ]},
+        {"name": "Mídia", "icon": "🎧", "type": "menu", "items": [
+            {"name": "Play/Pause", "icon": "⏯️", "type": "keys", "keys": "media_play_pause",
+             "stay": True},
+            {"name": "Próxima", "icon": "⏭️", "type": "keys", "keys": "media_next", "stay": True},
+            {"name": "Volume +", "icon": "🔊", "type": "keys", "keys": "media_volume_up",
+             "stay": True},
+            {"name": "Mudo", "icon": "🔇", "type": "keys", "keys": "media_volume_mute",
+             "stay": True},
+            {"name": "Volume -", "icon": "🔉", "type": "keys", "keys": "media_volume_down",
+             "stay": True},
+            {"name": "Anterior", "icon": "⏮️", "type": "keys", "keys": "media_previous",
+             "stay": True},
+        ]},
+        {"name": "Sistema", "icon": "⚙️", "type": "menu", "items": [
+            {"name": "Gerenciador", "icon": "📊", "type": "keys", "keys": "ctrl+shift+esc"},
+            {"name": "Configurações", "icon": "⚙️", "type": "open", "target": "ms-settings:"},
+            {"name": "Bloquear", "icon": "🔒", "type": "command",
+             "command": "rundll32.exe user32.dll,LockWorkStation"},
+            {"name": "Lixeira", "icon": "🗑️", "type": "open", "target": "shell:RecycleBinFolder"},
+            {"name": "Desligar (1 min)", "icon": "⏻", "type": "command",
+             "command": "shutdown /s /t 60"},
+            {"name": "Cancelar desligar", "icon": "✋", "type": "command", "command": "shutdown /a"},
+        ]},
     ],
 }
 
@@ -105,15 +152,22 @@ def load_config() -> dict:
     with CONFIG_PATH.open(encoding="utf-8") as f:
         user = json.load(f)
     cfg = {**DEFAULT_CONFIG, **user}
-    items = [i for i in cfg.get("items", []) if isinstance(i, dict) and i.get("name")]
-    if len(items) < 2:
-        raise ValueError("config.json precisa ter pelo menos 2 itens em \"items\".")
-    if len(items) > 12:
-        raise ValueError("config.json aceita no máximo 12 itens em \"items\".")
     if cfg["trigger"] not in TRIGGERS:
         raise ValueError(f"\"trigger\" deve ser um de: {', '.join(TRIGGERS)}")
-    cfg["items"] = items
+    cfg["items"] = _check_items(cfg.get("items", []), "\"items\"", minimum=2)
     return cfg
+
+
+def _check_items(items, where: str, minimum: int = 1) -> list[dict]:
+    items = [i for i in items if isinstance(i, dict) and i.get("name")]
+    if not minimum <= len(items) <= 12:
+        raise ValueError(f"{where} precisa ter de {minimum} a 12 itens (tem {len(items)}).")
+    for it in items:
+        if it.get("type") == "menu":
+            it["items"] = _check_items(it.get("items", []), f"o menu \"{it['name']}\"")
+        elif it.get("type") == "folder" and not it.get("path"):
+            raise ValueError(f"a pasta \"{it['name']}\" precisa de \"path\".")
+    return items
 
 
 # --------------------------------------------------------------------------
@@ -181,6 +235,43 @@ if IS_WIN:
     _gdi32.SelectObject.restype = wintypes.HGDIOBJ
     _gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
     _gdi32.DeleteDC.argtypes = [wintypes.HDC]
+
+    # --- pastas especiais e ícones de arquivos ---
+    _shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    _ole32 = ctypes.WinDLL("ole32", use_last_error=True)
+
+    class SHFILEINFOW(ctypes.Structure):
+        _fields_ = [("hIcon", wintypes.HICON), ("iIcon", ctypes.c_int),
+                    ("dwAttributes", wintypes.DWORD), ("szDisplayName", wintypes.WCHAR * 260),
+                    ("szTypeName", wintypes.WCHAR * 80)]
+
+    class ICONINFO(ctypes.Structure):
+        _fields_ = [("fIcon", wintypes.BOOL), ("xHotspot", wintypes.DWORD),
+                    ("yHotspot", wintypes.DWORD), ("hbmMask", wintypes.HBITMAP),
+                    ("hbmColor", wintypes.HBITMAP)]
+
+    class BITMAP(ctypes.Structure):
+        _fields_ = [("bmType", wintypes.LONG), ("bmWidth", wintypes.LONG),
+                    ("bmHeight", wintypes.LONG), ("bmWidthBytes", wintypes.LONG),
+                    ("bmPlanes", wintypes.WORD), ("bmBitsPixel", wintypes.WORD),
+                    ("bmBits", ctypes.c_void_p)]
+
+    class BITMAPINFO(ctypes.Structure):
+        _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 256)]
+
+    _shell32.SHGetKnownFolderPath.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.HANDLE,
+                                              ctypes.POINTER(ctypes.c_wchar_p)]
+    _shell32.SHGetKnownFolderPath.restype = ctypes.c_long
+    _shell32.SHGetFileInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD,
+                                        ctypes.POINTER(SHFILEINFOW), wintypes.UINT, wintypes.UINT]
+    _shell32.SHGetFileInfoW.restype = ctypes.c_void_p
+    _ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    _ole32.CoInitialize.argtypes = [ctypes.c_void_p]
+    _user32.GetIconInfo.argtypes = [wintypes.HICON, ctypes.POINTER(ICONINFO)]
+    _user32.DestroyIcon.argtypes = [wintypes.HICON]
+    _gdi32.GetObjectW.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p]
+    _gdi32.GetDIBits.argtypes = [wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
+                                 ctypes.c_void_p, ctypes.POINTER(BITMAPINFO), wintypes.UINT]
 
 GWL_EXSTYLE = -20
 WS_EX_LAYERED, WS_EX_TRANSPARENT = 0x00080000, 0x00000020
@@ -351,7 +442,7 @@ def send_keys(combo: str) -> None:
 
 
 def open_target(target: str, args: list[str] | None = None) -> None:
-    target = os.path.expandvars(os.path.expanduser(target))
+    target = resolve_path(target)
     if args:
         subprocess.Popen([target, *map(str, args)])
     elif IS_WIN:
@@ -360,6 +451,161 @@ def open_target(target: str, args: list[str] | None = None) -> None:
         subprocess.Popen(["open", target])
     else:
         subprocess.Popen(["xdg-open", target])
+
+
+# --------------------------------------------------------------------------
+# Pastas: caminhos especiais, listagem e ícones de arquivos
+# --------------------------------------------------------------------------
+KNOWN_FOLDERS = {
+    "desktop": ("B4BFCC3A-DB2C-424C-B029-7FE99A87C641", "Desktop"),
+    "documents": ("FDD39AD0-238F-46AF-ADB4-6C85480369C7", "Documents"),
+    "downloads": ("374DE290-123F-4565-9164-39C4925E467B", "Downloads"),
+    "pictures": ("33E28130-4E1E-4676-835A-98395C3BC3BB", "Pictures"),
+    "music": ("4BD8D571-6D19-48D3-BE97-422220080E43", "Music"),
+    "videos": ("18989B1D-99B5-455B-841C-AB7C74E4DDFC", "Videos"),
+}
+
+
+@lru_cache(maxsize=None)
+def known_folder(name: str) -> str:
+    """Caminho real de Área de Trabalho, Downloads etc. (funciona com OneDrive)."""
+    guid, fallback = KNOWN_FOLDERS[name]
+    if IS_WIN:
+        try:
+            g = (ctypes.c_ubyte * 16).from_buffer_copy(uuid.UUID(guid).bytes_le)
+            out = ctypes.c_wchar_p()
+            if _shell32.SHGetKnownFolderPath(ctypes.byref(g), 0, None, ctypes.byref(out)) == 0:
+                path = out.value
+                _ole32.CoTaskMemFree(ctypes.cast(out, ctypes.c_void_p))
+                return path
+        except Exception:
+            log.exception("SHGetKnownFolderPath falhou para %s", name)
+    return str(Path.home() / fallback)
+
+
+def resolve_path(spec: str) -> str:
+    """Expande {desktop}, {downloads}..., ~ e %VARIAVEIS%. URLs/protocolos ficam como estão."""
+    s = spec.strip()
+    m = re.match(r"^\{(\w+)\}(.*)$", s)
+    if m and m.group(1).lower() in KNOWN_FOLDERS:
+        s = known_folder(m.group(1).lower()) + m.group(2)
+    if re.match(r"^[a-zA-Z][\w+.-]+:", s):  # https:, steam:, ms-settings:, shell:...
+        return s
+    return os.path.normpath(os.path.expandvars(os.path.expanduser(s)))
+
+
+FILE_EMOJI = {
+    "🖼️": {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".ico", ".heic"},
+    "🎬": {".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv"},
+    "🎵": {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac"},
+    "📄": {".pdf", ".doc", ".docx", ".txt", ".md", ".odt", ".rtf"},
+    "📊": {".xls", ".xlsx", ".csv", ".ods", ".ppt", ".pptx"},
+    "📦": {".zip", ".rar", ".7z", ".tar", ".gz"},
+    "⚙️": {".exe", ".msi", ".bat", ".cmd", ".ps1"},
+    "🔗": {".lnk", ".url"},
+}
+HIDE_EXT = {".lnk", ".url"}  # atalhos aparecem sem a extensão
+SKIP_NAMES = {"desktop.ini", "thumbs.db"}
+MAX_ENTRIES = 400
+SLOTS = 12
+
+
+def emoji_for(name: str) -> str:
+    ext = os.path.splitext(name)[1].lower()
+    for emo, exts in FILE_EMOJI.items():
+        if ext in exts:
+            return emo
+    return "📄"
+
+
+def folder_entries(path: str) -> list[tuple[str, str, bool]]:
+    """(nome, caminho, é_pasta) — pastas primeiro, sem arquivos ocultos/de sistema."""
+    out = []
+    with os.scandir(path) as it:
+        for e in it:
+            if e.name.startswith(".") or e.name.lower() in SKIP_NAMES:
+                continue
+            try:
+                st = e.stat(follow_symlinks=False)
+                if getattr(st, "st_file_attributes", 0) & 0x6:  # HIDDEN | SYSTEM
+                    continue
+                is_dir = e.is_dir()
+            except OSError:
+                continue
+            key = [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", e.name.lower())]
+            out.append((not is_dir, key, e.name, e.path, is_dir))
+    out.sort()
+    return [(name, p, d) for _, _, name, p, d in out[:MAX_ENTRIES]]
+
+
+def folder_items(path: str, offset: int, icon_size: int) -> list[dict]:
+    entries = folder_entries(path)
+    items: list[dict] = []
+    if offset == 0:
+        items.append({"name": "Abrir pasta", "icon": "📂", "type": "open", "target": path})
+    rest = entries[offset:]
+    cap = SLOTS - len(items)
+    take = rest if len(rest) <= cap else rest[:cap - 1]
+    for name, p, is_dir in take:
+        if is_dir:
+            items.append({"name": name, "icon": "📁", "type": "folder", "path": p})
+        else:
+            stem, ext = os.path.splitext(name)
+            items.append({"name": stem if ext.lower() in HIDE_EXT else name,
+                          "icon": emoji_for(name), "type": "open", "target": p,
+                          "_icon_img": file_icon(p, icon_size)})
+    if len(take) < len(rest):
+        items.append({"name": f"Mais ({len(rest) - len(take)})", "icon": "⏩", "type": "folder",
+                      "path": path, "offset": offset + len(take)})
+    return items
+
+
+def file_icon(path: str, size: int) -> Image.Image | None:
+    """Ícone real do arquivo/atalho no Windows (o mesmo do Explorer)."""
+    if not IS_WIN:
+        return None
+    sfi = SHFILEINFOW()
+    try:
+        if not _shell32.SHGetFileInfoW(path, 0, ctypes.byref(sfi), ctypes.sizeof(sfi), 0x100):
+            return None
+    except Exception:
+        return None
+    hicon = sfi.hIcon
+    ii = ICONINFO()
+    try:
+        if not hicon or not _user32.GetIconInfo(hicon, ctypes.byref(ii)) or not ii.hbmColor:
+            return None
+        bm = BITMAP()
+        _gdi32.GetObjectW(ii.hbmColor, ctypes.sizeof(bm), ctypes.byref(bm))
+        w, h = bm.bmWidth, bm.bmHeight
+        hdc = _user32.GetDC(None)
+        try:
+            def bits(hbmp):
+                bmi = BITMAPINFO()
+                bmi.bmiHeader = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), w, -h, 1, 32,
+                                                 0, 0, 0, 0, 0, 0)
+                buf = ctypes.create_string_buffer(w * h * 4)
+                _gdi32.GetDIBits(hdc, hbmp, 0, h, buf, ctypes.byref(bmi), 0)
+                return Image.frombuffer("RGBA", (w, h), buf.raw, "raw", "BGRA", 0, 1)
+            img = bits(ii.hbmColor)
+            if img.getchannel("A").getextrema()[1] == 0:  # ícone antigo sem alfa: usa a máscara
+                mask = bits(ii.hbmMask).convert("L").point(lambda v: 0 if v > 127 else 255)
+                img.putalpha(mask)
+        finally:
+            _user32.ReleaseDC(None, hdc)
+        if img.size != (size, size):
+            img = img.resize((size, size), Image.LANCZOS)
+        return img
+    except Exception:
+        log.exception("ícone de %s", path)
+        return None
+    finally:
+        if ii.hbmColor:
+            _gdi32.DeleteObject(ii.hbmColor)
+        if ii.hbmMask:
+            _gdi32.DeleteObject(ii.hbmMask)
+        if hicon:
+            _user32.DestroyIcon(hicon)
 
 
 # --------------------------------------------------------------------------
@@ -375,8 +621,27 @@ def slice_at(dx: float, dy: float, n: int, dead_zone: float) -> int | None:
 
 
 # --------------------------------------------------------------------------
-# A roda
+# A roda (com camadas)
 # --------------------------------------------------------------------------
+class Layer:
+    def __init__(self, cfg, items, title, crumbs, depth):
+        for it in items:  # "icon": "auto" -> ícone do próprio programa/arquivo
+            if it.get("icon") == "auto" and "_icon_img" not in it:
+                path = resolve_path(str(it.get("target") or it.get("path") or ""))
+                img = file_icon(path, int(cfg["icon_size"])) if os.path.exists(path) else None
+                it["_icon_img"] = img
+                if img is None:
+                    it["icon"] = "⚙️"
+        self.items = items
+        self.title = title
+        self.crumbs = crumbs
+        self.renderer = neon.NeonWheel(cfg, items, title, " / ".join(crumbs), depth)
+        r = self.renderer
+        states = [None, *range(len(items))]
+        # pré-desenha os estados em segundo plano para não travar ao passar o mouse
+        threading.Thread(target=lambda: [r.static(s) for s in states], daemon=True).start()
+
+
 class Wheel:
     FRAME_MS = 16
     OPEN_S = 0.18  # duração da animação de abertura
@@ -387,9 +652,13 @@ class Wheel:
         self.win.overrideredirect(True)
         self.win.attributes("-topmost", True)
         self.visible = False
+        self.stack: list[Layer] = []
         self.selected: int | None = None
+        self.dist = 0.0
+        self.anchor = (0, 0)
         self.center = (0, 0)
         self.origin = (0, 0)
+        self.size = 0
         self.t0 = 0.0
         self._job = None
         self._last = None
@@ -412,37 +681,73 @@ class Wheel:
 
     def rebuild(self) -> None:
         cfg = self.app.cfg
-        self.items = cfg["items"]
-        self.renderer = neon.NeonWheel(cfg)
-        self.size = self.renderer.size
         self.r = int(cfg["inner_radius"])
         self.dead = float(cfg.get("dead_zone", self.r * 0.7))
         self.animate = bool(cfg.get("animations", True))
-        if not IS_WIN:
-            self.canvas.configure(width=self.size, height=self.size, bg=cfg["background"])
-        # pré-desenha todos os estados em segundo plano para a roda abrir sem atraso
-        r = self.renderer
-        states = [None, *range(len(self.items))]
-        threading.Thread(target=lambda: [r.static(s) for s in states], daemon=True).start()
+        self.hover_ms = float(cfg.get("hover_open_ms", 450))
+        if self.visible:
+            self.hide()
+        self.root_layer = Layer(cfg, cfg["items"], "MIRA", ["MIRA.SYS"], 0)
+
+    @property
+    def layer(self) -> Layer:
+        return self.stack[-1]
+
+    @property
+    def depth(self) -> int:
+        return len(self.stack) - 1
+
+    # --- camadas ---
+    def _enter(self, layer: Layer) -> None:
+        self.stack.append(layer)
+        self._place()
+
+    def push(self, layer_items, title: str) -> None:
+        crumbs = self.layer.crumbs + [title]
+        self._enter(Layer(self.app.cfg, layer_items, title, crumbs, len(self.stack)))
+
+    def pop(self) -> bool:
+        if len(self.stack) <= 1:
+            return False
+        self.stack.pop()
+        self._place()
+        return True
+
+    def _place(self) -> None:
+        """Posiciona a camada atual e reinicia a animação de abertura."""
+        self.size = self.layer.renderer.size
+        vx, vy, vw, vh = virtual_screen(self.app.root)
+        half = self.size // 2
+        x = max(vx + half, min(self.anchor[0], vx + vw - half))
+        y = max(vy + half, min(self.anchor[1], vy + vh - half))
+        self.center = (x, y)
+        self.origin = (x - half, y - half)
+        self.t0 = time.monotonic()
+        self._last = None
+        # só começa a contar o "passar o mouse" depois que o cursor mudar de fatia,
+        # senão uma pasta dentro de outra abriria sozinha em cascata
+        self.update_selection()
+        self.arm_sel = self.selected
+        self.armed = self.selected is None
+        self.dwell_sel = None
+        self.dwell_t0 = 0.0
+        if not IS_WIN and self.visible:
+            self.canvas.configure(width=self.size, height=self.size)
+            self.win.geometry(f"{self.size}x{self.size}+{self.origin[0]}+{self.origin[1]}")
 
     # --- exibir / esconder ---
     def show_at(self, x: int, y: int) -> None:
-        vx, vy, vw, vh = virtual_screen(self.app.root)
-        half = self.size // 2
-        x = max(vx + half, min(x, vx + vw - half))
-        y = max(vy + half, min(y, vy + vh - half))
-        self.center = (x, y)
-        self.origin = (x - half, y - half)
-        self.selected = None
-        self._last = None
-        self.t0 = time.monotonic()
+        self.anchor = (x, y)
+        self.stack = [self.root_layer]
+        self._place()
         self.visible = True
-        self._render()
+        self._render(0.0)
         if IS_WIN:
             _user32.ShowWindow(self.hwnd, 4)  # SW_SHOWNOACTIVATE
             # HWND_TOPMOST, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
             _user32.SetWindowPos(self.hwnd, wintypes.HWND(-1), 0, 0, 0, 0, 0x13)
         else:
+            self.canvas.configure(width=self.size, height=self.size)
             self.win.geometry(f"{self.size}x{self.size}+{self.origin[0]}+{self.origin[1]}")
             self.win.deiconify()
             self.win.lift()
@@ -450,6 +755,7 @@ class Wheel:
 
     def hide(self) -> None:
         self.visible = False
+        self.stack = []
         if self._job:
             self.win.after_cancel(self._job)
             self._job = None
@@ -460,18 +766,19 @@ class Wheel:
 
     def update_selection(self) -> int | None:
         px, py = cursor_pos(self.app.root)
-        self.selected = slice_at(px - self.center[0], py - self.center[1],
-                                 len(self.items), self.dead)
+        dx, dy = px - self.center[0], py - self.center[1]
+        self.dist = math.hypot(dx, dy)
+        self.selected = slice_at(dx, dy, len(self.layer.items), self.dead)
         return self.selected
 
-    def _render(self) -> None:
+    def _render(self, progress: float) -> None:
         t = time.monotonic() - self.t0
         opening = min(1.0, t / self.OPEN_S)
-        state = (self.selected, opening >= 1.0)
+        state = (id(self.layer), self.selected, opening >= 1.0, round(progress, 2))
         if not self.animate and state == self._last:
             return  # nada mudou
         self._last = state
-        img = self.renderer.frame(self.selected, t, opening, self.animate)
+        img = self.layer.renderer.frame(self.selected, t, opening, self.animate, progress)
         if IS_WIN:
             update_layered(self.hwnd, img, *self.origin)
         else:
@@ -483,12 +790,36 @@ class Wheel:
             else:
                 self.canvas.itemconfigure(self._img_id, image=self._photo)
 
+    def _hover_progress(self) -> float:
+        """Abre a subcamada ao parar o mouse sobre ela (ou empurrar para fora da roda)."""
+        sel = self.selected
+        if not self.armed and sel != self.arm_sel:
+            self.armed = True
+        item = self.layer.items[sel] if sel is not None else None
+        if not (self.armed and item is not None and neon.is_branch(item)):
+            self.dwell_sel = None
+            return 0.0
+        if self.dist > self.layer.renderer.R + 45:  # "empurrou" para fora: abre na hora
+            return 1.0
+        if self.hover_ms <= 0:
+            return 0.0
+        now = time.monotonic()
+        if sel != self.dwell_sel:
+            self.dwell_sel, self.dwell_t0 = sel, now
+        return (now - self.dwell_t0) * 1000 / self.hover_ms
+
     def _tick(self) -> None:
         if not self.visible:
             return
         self.update_selection()
+        progress = self._hover_progress()
+        if progress >= 1.0:
+            self.app.activate(self.layer.items[self.selected])
+            if not self.visible:
+                return
+            progress = 0.0
         try:
-            self._render()
+            self._render(progress)
         except Exception:
             log.exception("falha ao desenhar a roda")
         self._job = self.win.after(self.FRAME_MS, self._tick)
@@ -736,15 +1067,15 @@ class App:
             if self.wheel.visible:
                 sel = self.wheel.update_selection()
                 if sel is not None:
-                    self._choose(sel)
+                    self.activate(self.wheel.layer.items[sel])
                 # sem seleção (clique rápido): a roda fica aberta para clicar
         elif ev == "click":
             if not self.wheel.visible:
                 return
             sel = self.wheel.update_selection()
             if arg == "left" and sel is not None:
-                self._choose(sel)
-            else:
+                self.activate(self.wheel.layer.items[sel])
+            elif not self.wheel.pop():  # centro / botão direito: volta uma camada
                 self._close_wheel()
         elif ev == "esc":
             self._close_wheel()
@@ -773,8 +1104,26 @@ class App:
         self.wheel.rebuild()
         self.toast(f"Atalhos recarregados ({len(self.cfg['items'])} itens)")
 
-    def _choose(self, index: int):
-        item = self.cfg["items"][index]
+    def activate(self, item: dict):
+        """Abre a subcamada do item ou executa a ação dele."""
+        kind = item.get("type")
+        if kind in ("menu", "folder"):
+            try:
+                if kind == "menu":
+                    self.wheel.push(item["items"], item["name"])
+                else:
+                    path = resolve_path(item["path"])
+                    items = folder_items(path, int(item.get("offset", 0)),
+                                         int(self.cfg["icon_size"]))
+                    title = item["name"] if not item.get("offset") else self.wheel.layer.title
+                    self.wheel.push(items, title)
+            except OSError as e:
+                self.toast(f"Não deu para abrir '{item.get('name')}': {e.strerror or e}",
+                           error=True, ms=3500)
+            return
+        if item.get("stay"):  # ex.: volume — a roda continua aberta
+            self.run_action(item)
+            return
         self._close_wheel()
         # pequena pausa para a roda sumir antes da ação (importante p/ prints)
         self.root.after(120, lambda: self.run_action(item))
@@ -784,7 +1133,7 @@ class App:
         log.info("ação %s (%s)", item.get("name"), kind)
         try:
             if kind == "open":
-                open_target(item["target"], item.get("args"))
+                open_target(str(item["target"]), item.get("args"))
             elif kind == "command":
                 subprocess.Popen(item["command"], shell=True)
             elif kind == "keys":
@@ -809,7 +1158,7 @@ class App:
             self._deliver(img)
 
     def _deliver(self, img: Image.Image):
-        folder = Path(os.path.expandvars(os.path.expanduser(self.cfg["screenshot_folder"])))
+        folder = Path(resolve_path(self.cfg["screenshot_folder"]))
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / f"Mira_{datetime.now():%Y-%m-%d_%H-%M-%S}.png"
         img.save(path)
@@ -865,6 +1214,7 @@ class App:
 
 def main():
     if IS_WIN:
+        _ole32.CoInitialize(None)  # necessário para os ícones de arquivos
         mutex = _kernel32.CreateMutexW(None, False, "Local\\MiraRodaDeAtalhos")
         if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
             r = tk.Tk()
