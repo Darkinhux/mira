@@ -1,0 +1,60 @@
+{
+  "trigger": "mouse4",
+  "radius": 170,
+  "inner_radius": 55,
+  "icon_size": 34,
+  "accent": "#7c5cff",
+  "slice_color": "#1f2029",
+  "center_color": "#15161c",
+  "text_color": "#e9e9f2",
+  "opacity": 0.96,
+  "screenshot_folder": "~/Pictures/Mira",
+  "items": [
+    {
+      "name": "Steam",
+      "icon": "🎮",
+      "type": "open",
+      "target": "steam://open/main"
+    },
+    {
+      "name": "Discord",
+      "icon": "💬",
+      "type": "open",
+      "target": "discord://"
+    },
+    {
+      "name": "Recortar",
+      "icon": "✂️",
+      "type": "snip"
+    },
+    {
+      "name": "Tela inteira",
+      "icon": "🖥️",
+      "type": "screenshot"
+    },
+    {
+      "name": "Navegador",
+      "icon": "🌐",
+      "type": "open",
+      "target": "https://www.google.com"
+    },
+    {
+      "name": "Arquivos",
+      "icon": "📁",
+      "type": "open",
+      "target": "explorer.exe"
+    },
+    {
+      "name": "Play/Pause",
+      "icon": "⏯️",
+      "type": "keys",
+      "keys": "media_play_pause"
+    },
+    {
+      "name": "Gerenciador",
+      "icon": "📊",
+      "type": "keys",
+      "keys": "ctrl+shift+esc"
+    }
+  ]
+}
