@@ -258,3 +258,18 @@ def test_ocr_prepare_scales():
     assert max(big.size) <= ocr.MAX_SIDE                      # limite do motor do Windows
     normal = ocr.prepare(Image.new("RGB", (1200, 800)))
     assert normal.size == (1200, 800)
+
+
+# ---------------------------------------------------------------- editor
+def test_editor_key_capture_names():
+    import editor
+
+    class E:
+        def __init__(self, keysym, state=0, char=""):
+            self.keysym, self.state, self.char = keysym, state, char
+
+    assert editor.tk_combo(E("t", 0x4 | 0x1, "T")) == "ctrl+shift+t"
+    assert editor.tk_combo(E("F5")) == "f5"
+    assert editor.tk_combo(E("Return", 0x4)) == "ctrl+enter"
+    assert editor.tk_combo(E("Prior")) == "page_up"
+    assert editor.tk_combo(E("Control_L", 0x4)) is None  # só o modificador: ainda esperando

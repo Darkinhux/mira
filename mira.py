@@ -50,6 +50,7 @@ from pynput import keyboard, mouse  # noqa: E402
 
 import atualizar  # noqa: E402
 import copiados  # noqa: E402
+import editor  # noqa: E402
 import jogos  # noqa: E402
 import migracao  # noqa: E402
 import neon  # noqa: E402
@@ -126,6 +127,7 @@ DEFAULT_CONFIG: dict = {
              "stay": True},
         ]},
         {"name": "Sistema", "icon": "⚙️", "type": "menu", "items": [
+            {"name": "Editar roda", "icon": "🎨", "type": "editor"},
             {"name": "Gerenciador", "icon": "📊", "type": "keys", "keys": "ctrl+shift+esc"},
             {"name": "Configurações", "icon": "⚙️", "type": "open", "target": "ms-settings:"},
             {"name": "Bloquear", "icon": "🔒", "type": "command",
@@ -1037,6 +1039,7 @@ class App:
         self.ignore_up = False
         self._swallow: set[int] = set()
         self.tray = None
+        self.editor = None
         self.update_info = None
         self.updating = False
         self._init_clipboard()
@@ -1111,7 +1114,8 @@ class App:
         put = lambda ev: (lambda icon, item: self.events.put((ev, None)))  # noqa: E731
         items = [
             pystray.MenuItem("Abrir roda", put("open_center"), default=True),
-            pystray.MenuItem("Editar atalhos (config.json)", put("edit_config")),
+            pystray.MenuItem("🎨 Editar roda", put("open_editor")),
+            pystray.MenuItem("Editar config.json (avançado)", put("edit_config")),
             pystray.MenuItem("Recarregar atalhos", put("reload")),
         ]
         if IS_WIN:
@@ -1193,6 +1197,8 @@ class App:
             self.root.after(60, self.start_snip)
         elif ev == "open_center":
             self._open_wheel(self.root.winfo_screenwidth() // 2, self.root.winfo_screenheight() // 2)
+        elif ev == "open_editor":
+            self.open_editor()
         elif ev == "edit_config":
             open_target(str(CONFIG_PATH))
         elif ev == "reload":
@@ -1274,6 +1280,17 @@ class App:
             log.exception("falha ao colar")
             self.toast(f"Não deu para colar: {e}", error=True)
 
+    def open_editor(self):
+        if self.editor is not None and self.editor.win.winfo_exists():
+            self.editor.win.deiconify()
+            self.editor.win.lift()
+            self.editor.win.focus_force()
+            return self.editor
+        self.editor = editor.RodaEditor(self.root, CONFIG_PATH, DEFAULT_CONFIG, {
+            "check_items": _check_items, "file_icon": file_icon,
+            "resolve_path": resolve_path, "on_saved": self.reload})
+        return self.editor
+
     def reload(self):
         try:
             self.cfg = load_config()
@@ -1291,6 +1308,10 @@ class App:
     def activate(self, item: dict):
         """Abre a subcamada do item ou executa a ação dele."""
         kind = item.get("type")
+        if kind == "editor":
+            self._close_wheel()
+            self.open_editor()
+            return
         if kind == "paste":
             self._close_wheel()
             self.root.after(120, lambda: self.paste_clip(item["_clip"]))

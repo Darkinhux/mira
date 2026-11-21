@@ -143,10 +143,31 @@ Gerenciador de Tarefas → Detalhes. Também dá para usar `title`, um pedaço d
 ]
 ```
 
-## Personalizar os atalhos
+## Editor da roda (sem mexer em arquivo)
 
-Clique com o botão direito no ícone perto do relógio → **Editar atalhos**, mude o
-`config.json` e depois → **Recarregar atalhos**. Cada camada aceita até 12 itens.
+Clique com o botão direito no ícone perto do relógio → **🎨 Editar roda** (ou na roda:
+*Sistema ▸ Editar roda*).
+
+![Editor da roda](docs/editor.png)
+
+- **Esquerda:** a roda principal, os submenus e os perfis. **Arraste** um item para mudar de
+  lugar ou para dentro de outro submenu. Os botões **＋ Item**, **＋ Submenu**, **＋ Perfil**,
+  **Duplicar**, **▲▼** e **Remover** ficam no topo.
+- **Meio:** a **prévia ao vivo** da roda. Clique numa fatia para editar o item.
+- **Direita:** os campos do item em português:
+  - nome e ícone (seletor de emoji, imagem ou **Auto** para usar o ícone do próprio programa);
+  - o que o item faz;
+  - os campos certos para cada tipo: **Arquivo…/Pasta…** para escolher, **⏺ Gravar** para as
+    teclas, teclas prontas (volume, música…).
+- **⚙ Configurações gerais:** botão do mouse, cores, tamanho da roda, tempo para abrir camada
+  e as opções liga/desliga.
+- **💾 Salvar** (ou `Ctrl+S`) confere se falta algo e avisa o quê. Antes de gravar, guarda uma
+  cópia em `config.antes-do-editor.json`, e a roda é atualizada na hora.
+
+## Personalizar os atalhos (config.json, avançado)
+
+O jeito fácil é o **editor da roda** (acima). Se preferir o arquivo: ícone perto do relógio →
+**Editar config.json (avançado)**, mude e depois → **Recarregar atalhos**. Cada camada aceita até 12 itens.
 
 ```json
 { "name": "Spotify",  "icon": "🎵", "type": "open",  "target": "spotify:" }
@@ -184,6 +205,7 @@ Um submenu é um item `menu` com os próprios `items` dentro (pode ter menu dent
 | `clipboard`  | Abre o histórico do Ctrl+C                                             | —                 |
 | `ocr`        | Selecionar uma área e copiar o texto dela                              | —                 |
 | `default`    | Abre a roda normal (útil dentro de um perfil)                          | —                 |
+| `editor`     | Abre o editor da roda                                                  | —                 |
 
 Qualquer item com `"stay": true` não fecha a roda depois de usado.
 

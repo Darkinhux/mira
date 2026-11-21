@@ -300,3 +300,50 @@ def test_shift_printscreen_copies_text(app, monkeypatch):
         assert "MIRA" in text.upper() and "2026" in text, f"copiado: {text!r} / avisos: {toasts}"
     finally:
         win.destroy()
+
+
+# ---------------------------------------------------------------- editor visual
+def test_editor_edit_drag_and_save(app, mira, monkeypatch, tmp_path):
+    import json
+    import shutil
+    from tkinter import messagebox
+    cfg_file = tmp_path / "config.json"
+    shutil.copy(mira.CONFIG_PATH, cfg_file)
+    monkeypatch.setattr(mira, "CONFIG_PATH", cfg_file)
+    monkeypatch.setattr(messagebox, "showwarning", lambda *a, **k: None)
+    try:
+        ed = app.open_editor()
+        pump(app, 0.5)
+        ed.win.update()
+        ImageGrab.grab().save(ARTIFACTS / "editor_no_windows.png")
+
+        it = ed.add_item()
+        ed.vars["name"].set("Bloco de notas")
+        ed.vars["target"].set(r"C:\Windows\notepad.exe")
+        ed.vars["icon"].set("auto")
+        pump(app, 0.4)
+        assert ed._icon_image(it) is not None  # ícone de verdade do notepad.exe
+
+        midia = next(i for i in ed.data["items"] if i["name"] == "Mídia")
+        assert ed.move_to(it, ed.iid_of[id(midia)])
+        assert midia["items"][-1] is it
+
+        prof = ed.add_profile()
+        ed.vars["name"].set("Notepad")
+        assert not ed.save(quiet=True)  # perfil sem programa: não salva
+        ed.vars["match"].set("notepad.exe")
+        assert ed.save(quiet=True)
+        pump(app, 0.3)
+
+        saved = json.loads(cfg_file.read_text(encoding="utf-8"))
+        assert "Bloco de notas" in [i["name"] for i in
+                                    next(i for i in saved["items"] if i["name"] == "Mídia")["items"]]
+        assert any(p["name"] == "Notepad" and p["match"] == ["notepad.exe"]
+                   for p in saved["profiles"])
+        assert "_icon_img" not in cfg_file.read_text(encoding="utf-8")
+        assert any(p["name"] == "Notepad" for p in app.cfg["profiles"])  # roda recarregou
+        assert prof is not None
+        ed.win.destroy()
+    finally:
+        monkeypatch.undo()
+        app.reload()

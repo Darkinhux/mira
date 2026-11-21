@@ -242,6 +242,11 @@
       "type": "menu",
       "items": [
         {
+          "name": "Editar roda",
+          "icon": "🎨",
+          "type": "editor"
+        },
+        {
           "name": "Gerenciador",
           "icon": "📊",
           "type": "keys",
