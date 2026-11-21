@@ -9,6 +9,7 @@
   "text_color": "#e9fbff",
   "animations": true,
   "hover_open_ms": 450,
+  "print_screen": true,
   "screenshot_folder": "{pictures}/Mira",
   "items": [
     {

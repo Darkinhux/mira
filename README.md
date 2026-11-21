@@ -43,11 +43,27 @@ abre a pasta no Explorador, e se tiver muita coisa aparece **Mais (N)** para a p
 Para abrir junto com o Windows, clique com o botão direito no ícone perto do relógio
 e marque **"Iniciar com o Windows"**.
 
-## Recorte de tela
+## Recorte de tela (estilo Lightshot)
 
-Escolha **Recortar**, arraste um retângulo e solte. A imagem é **copiada** (é só colar
-com `Ctrl+V` no Discord, por exemplo) e **salva** em `Imagens\Mira`. Clique no aviso
-que aparece para abrir a imagem. `Esc` ou o botão direito cancelam.
+Aperte **PrtSc** (ou escolha **Recortar** na roda) e arraste para selecionar uma área.
+
+![Recorte](docs/recorte.png)
+
+- **Ajustar:** puxe as alças para redimensionar ou arraste por dentro para mover.
+  Arrastar fora da seleção começa uma nova.
+- **Desenhar** (barra ao lado): Lápis `P`, Linha `L`, Seta `A`, Retângulo `R`,
+  Marca-texto `M`, Texto `T`, cor e desfazer (`Ctrl+Z`). A **roda do mouse** muda a
+  espessura (e o tamanho do texto). O botão direito solta a ferramenta.
+- **Terminar** (barra de baixo):
+
+| Atalho                    | O que faz                                                    |
+|---------------------------|--------------------------------------------------------------|
+| `Ctrl+C`                  | Copia (é só colar com `Ctrl+V` no Discord, por exemplo)       |
+| `Ctrl+S`                  | Salvar como… (escolhe onde e o nome)                          |
+| `Enter` ou duplo clique   | Copia **e** salva em `Imagens\Mira`                          |
+| `Esc`                     | Cancela                                                      |
+
+Para o PrtSc não abrir o recorte do Mira, use `"print_screen": false` no `config.json`.
 
 ## Personalizar os atalhos
 
@@ -110,6 +126,7 @@ Outras opções do `config.json` (troque as cores para criar seu tema — ex.: `
 | `background`        | `#0b0b16`           | Cor de fundo das fatias                       |
 | `animations`        | `true`              | `false` desliga as animações (PC mais fraco)  |
 | `hover_open_ms`     | `450`               | Tempo parado em cima para abrir uma camada (`0` = só clicando) |
+| `print_screen`      | `true`              | A tecla PrtSc abre o recorte do Mira          |
 | `screenshot_folder` | `{pictures}/Mira`   | Onde os prints são salvos                     |
 
 ## Problemas comuns

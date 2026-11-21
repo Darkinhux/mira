@@ -26,7 +26,7 @@ import uuid
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 
 IS_WIN = sys.platform == "win32"
 
@@ -43,10 +43,11 @@ if IS_WIN:
 
 import threading  # noqa: E402
 
-from PIL import Image, ImageChops, ImageEnhance, ImageGrab, ImageTk  # noqa: E402
+from PIL import Image, ImageChops, ImageGrab, ImageTk  # noqa: E402
 from pynput import keyboard, mouse  # noqa: E402
 
 import neon  # noqa: E402
+import recorte  # noqa: E402
 
 APP_NAME = "Mira"
 BASE_DIR = Path(__file__).resolve().parent
@@ -71,6 +72,7 @@ DEFAULT_CONFIG: dict = {
     "text_color": "#e9fbff",
     "animations": True,
     "hover_open_ms": 450,
+    "print_screen": True,
     "screenshot_folder": "{pictures}/Mira",
     "items": [
         {"name": "Steam", "icon": "🎮", "type": "menu", "items": [
@@ -826,126 +828,6 @@ class Wheel:
 
 
 # --------------------------------------------------------------------------
-# Recorte de tela
-# --------------------------------------------------------------------------
-class Snipper:
-    def __init__(self, app: "App", on_done):
-        self.app = app
-        self.on_done = on_done
-        cfg = app.cfg
-        self.neon, self.accent = cfg["neon"], cfg["accent"]
-        root = app.root
-        vx, vy, vw, vh = virtual_screen(root)
-        self.vw, self.vh = vw, vh
-        self.shot = ImageGrab.grab(all_screens=True) if IS_WIN else ImageGrab.grab()
-        self.sx, self.sy = self.shot.width / vw, self.shot.height / vh
-        disp = self.shot if self.shot.size == (vw, vh) else self.shot.resize((vw, vh))
-        self.disp = disp.convert("RGB")
-        dim = ImageEnhance.Brightness(self.disp).enhance(0.4)
-        dim = Image.blend(dim, Image.new("RGB", dim.size, cfg["background"]), 0.3)
-        self.bg = ImageTk.PhotoImage(dim)
-
-        self.win = tk.Toplevel(root)
-        self.win.overrideredirect(True)
-        self.win.attributes("-topmost", True)
-        self.win.geometry(f"{vw}x{vh}+{vx}+{vy}")
-        self.cv = tk.Canvas(self.win, width=vw, height=vh, highlightthickness=0,
-                            bd=0, cursor="crosshair")
-        self.cv.pack()
-        self.cv.create_image(0, 0, anchor="nw", image=self.bg)
-
-        cx, cy = cursor_pos(root)
-        hx, hy = cx - vx, max(40, cy - vy - 70)
-        self.cv.create_rectangle(hx - 230, hy - 18, hx + 230, hy + 18, fill="#07070f",
-                                 outline=self.neon, tags="hint")
-        self.cv.create_text(hx, hy, text="[ ARRASTE PARA RECORTAR ]   ESC // CANCELA",
-                            fill=self.neon, font=("Consolas", 12, "bold"), tags="hint")
-
-        self.start = None
-        self.cur = None
-        self.crop_img = None
-        self._pending = False
-        self.cv.bind("<Motion>", self._hover)
-        self.cv.bind("<ButtonPress-1>", self._press)
-        self.cv.bind("<B1-Motion>", self._motion)
-        self.cv.bind("<ButtonRelease-1>", self._release)
-        self.cv.bind("<ButtonPress-3>", lambda e: self._finish(None))
-        self.win.bind("<Escape>", lambda e: self._finish(None))
-        self.win.after(30, self._focus)
-
-    def _focus(self):
-        self.win.lift()
-        self.win.focus_force()
-        self.cv.focus_set()
-
-    def _crosshair(self, x, y):
-        self.cv.delete("cross")
-        for coords in ((0, y, self.vw, y), (x, 0, x, self.vh)):
-            self.cv.create_line(*coords, fill=self.neon, dash=(6, 6), tags="cross")
-        self.cv.create_text(x + 12, y + 14, anchor="nw", text=f"X{x:04d} Y{y:04d}",
-                            fill=self.neon, font=("Consolas", 8), tags="cross")
-
-    def _hover(self, e):
-        if not self.start:
-            self._crosshair(e.x, e.y)
-
-    def _rect(self):
-        (x0, y0), (x1, y1) = self.start, self.cur
-        return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
-
-    def _press(self, e):
-        self.start = self.cur = (e.x, e.y)
-        self.cv.delete("hint")
-
-    def _motion(self, e):
-        if not self.start:
-            return
-        self.cur = (e.x, e.y)
-        if not self._pending:  # limita o redesenho a ~1 por frame
-            self._pending = True
-            self.win.after(8, self._redraw)
-
-    def _redraw(self):
-        self._pending = False
-        self.cv.delete("sel")
-        self._crosshair(*self.cur)
-        x0, y0, x1, y1 = self._rect()
-        if x1 - x0 < 1 or y1 - y0 < 1:
-            return
-        cv = self.cv
-        self.crop_img = ImageTk.PhotoImage(self.disp.crop((x0, y0, x1, y1)))
-        cv.create_image(x0, y0, anchor="nw", image=self.crop_img, tags="sel")
-        cv.create_rectangle(x0, y0, x1, y1, outline=self.neon, width=1, tags="sel")
-        L = max(4, min(22, (x1 - x0) // 3, (y1 - y0) // 3))
-        for x, y, sx, sy in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
-            cv.create_line(x, y + sy * L, x, y, x + sx * L, y, fill=self.accent, width=3,
-                           tags="sel")
-        w, h = round((x1 - x0) * self.sx), round((y1 - y0) * self.sy)
-        label = f" {w} × {h} "
-        ly = y0 - 24 if y0 > 30 else y1 + 6
-        tid = cv.create_text(x0, ly, anchor="nw", text=label, fill="#07070f",
-                             font=("Consolas", 10, "bold"), tags="sel")
-        bx0, by0, bx1, by1 = cv.bbox(tid)
-        cv.tag_lower(cv.create_rectangle(bx0 - 2, by0 - 2, bx1 + 2, by1 + 2, fill=self.accent,
-                                         outline="", tags="sel"), tid)
-
-    def _release(self, e):
-        if not self.start:
-            return
-        self.cur = (e.x, e.y)
-        x0, y0, x1, y1 = self._rect()
-        if x1 - x0 < 4 or y1 - y0 < 4:
-            self._finish(None)
-            return
-        box = (round(x0 * self.sx), round(y0 * self.sy), round(x1 * self.sx), round(y1 * self.sy))
-        self._finish(self.shot.crop(box))
-
-    def _finish(self, img):
-        self.win.destroy()
-        self.on_done(img)
-
-
-# --------------------------------------------------------------------------
 # Aplicativo
 # --------------------------------------------------------------------------
 class App:
@@ -973,7 +855,11 @@ class App:
         else:
             self.mouse_listener = mouse.Listener(on_click=self._on_click_generic)
         self.mouse_listener.start()
-        self.kb_listener = keyboard.Listener(on_press=self._on_key)
+        if IS_WIN:
+            self.kb_listener = keyboard.Listener(on_press=self._on_key,
+                                                 win32_event_filter=self._kb_filter)
+        else:
+            self.kb_listener = keyboard.Listener(on_press=self._on_key)
         self.kb_listener.start()
 
     def _win32_filter(self, msg, data):
@@ -1004,9 +890,19 @@ class App:
         elif self.wheel_open and pressed and button in (mouse.Button.left, mouse.Button.right):
             self.events.put(("click", "left" if button == mouse.Button.left else "right"))
 
+    def _kb_filter(self, msg, data):
+        # PrtSc abre o recorte (e não o recorte do Windows), como no Lightshot
+        if data.vkCode == 0x2C and self.cfg.get("print_screen", True):
+            if msg in (0x0100, 0x0104):  # WM_KEYDOWN, WM_SYSKEYDOWN
+                self.events.put(("print_screen", None))
+            self.kb_listener.suppress_event()
+
     def _on_key(self, key):
         if key == keyboard.Key.esc and self.wheel_open:
             self.events.put(("esc", None))
+        elif (not IS_WIN and key == keyboard.Key.print_screen
+              and self.cfg.get("print_screen", True)):
+            self.events.put(("print_screen", None))
 
     # --- bandeja do sistema ---
     def _start_tray(self):
@@ -1079,6 +975,10 @@ class App:
                 self._close_wheel()
         elif ev == "esc":
             self._close_wheel()
+        elif ev == "print_screen":
+            if self.wheel.visible:
+                self._close_wheel()
+            self.root.after(60, self.start_snip)
         elif ev == "open_center":
             self._open_wheel(self.root.winfo_screenwidth() // 2, self.root.winfo_screenheight() // 2)
         elif ev == "edit_config":
@@ -1139,8 +1039,7 @@ class App:
             elif kind == "keys":
                 send_keys(item["keys"])
             elif kind == "snip":
-                self.snipping = True
-                Snipper(self, self._snip_done)
+                self.start_snip()
             elif kind == "screenshot":
                 img = ImageGrab.grab(all_screens=True) if IS_WIN else ImageGrab.grab()
                 self._deliver(img)
@@ -1152,10 +1051,54 @@ class App:
             log.exception("falha na ação")
             self.toast(f"'{item.get('name')}' falhou: {e}", error=True, ms=4000)
 
-    def _snip_done(self, img):
+    def start_snip(self):
+        if self.snipping:
+            return
+        self.snipping = True
+        try:
+            shot = ImageGrab.grab(all_screens=True) if IS_WIN else ImageGrab.grab()
+            recorte.Snipper(self.root, self.cfg, shot, virtual_screen(self.root),
+                            cursor_pos(self.root), self._snip_done)
+        except Exception:
+            self.snipping = False
+            raise
+
+    def _snip_done(self, img, action):
         self.snipping = False
-        if img is not None:
+        if img is None:
+            return
+        if action == "copy":
+            if copy_image_to_clipboard(img):
+                self.toast("Imagem copiada — é só colar com Ctrl+V")
+            else:
+                self._deliver(img)
+        elif action == "save":
+            self._save_as(img)
+        else:
             self._deliver(img)
+
+    def _save_as(self, img: Image.Image):
+        folder = Path(resolve_path(self.cfg["screenshot_folder"]))
+        folder.mkdir(parents=True, exist_ok=True)
+        # janelinha "topmost" para a caixa de salvar não abrir atrás do jogo
+        owner = tk.Toplevel(self.root)
+        owner.overrideredirect(True)
+        owner.attributes("-topmost", True)
+        owner.geometry("1x1+0+0")
+        owner.focus_force()
+        try:
+            path = filedialog.asksaveasfilename(
+                parent=owner, title="Salvar recorte", initialdir=str(folder),
+                initialfile=f"Mira_{datetime.now():%Y-%m-%d_%H-%M-%S}.png",
+                defaultextension=".png",
+                filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg *.jpeg"), ("Todos", "*.*")])
+        finally:
+            owner.destroy()
+        if not path:
+            return
+        out = img.convert("RGB") if path.lower().endswith((".jpg", ".jpeg")) else img
+        out.save(path)
+        self.toast(f"Salvo em\n{path}", on_click=lambda: open_target(path))
 
     def _deliver(self, img: Image.Image):
         folder = Path(resolve_path(self.cfg["screenshot_folder"]))
