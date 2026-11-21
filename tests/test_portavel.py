@@ -121,3 +121,31 @@ def test_epic_and_riot_scan(tmp_path):
     r = jogos.riot_games(riot)
     assert [g["name"] for g in r] == ["VALORANT"]
     assert "--launch-product=valorant" in r[0]["args"]
+
+
+# ---------------------------------------------------------------- Ctrl+C
+import copiados  # noqa: E402
+
+
+def test_clipboard_history_dedupe_and_limits(tmp_path):
+    h = copiados.ClipboardHistory(max_items=3)
+    for t in ("um", "dois", "três", "dois", "   ", ""):
+        h.add_text(t)
+    assert [e.text for e in h.entries] == ["dois", "três", "um"]
+    h.add_text("quatro")
+    assert len(h.entries) == 3 and h.entries[0].text == "quatro"
+    h.add_image(Image.new("RGB", (10, 10), "red"))
+    assert h.entries[0].kind == "image" and h.entries[0].label() == "Imagem 10×10"
+    assert copiados.Entry("text", text="https://youtube.com").icon() == "🔗"
+    assert copiados.Entry("text", text="(11) 99999-0000").icon() == "🔢"
+
+
+def test_clipboard_history_save_only_when_enabled(tmp_path):
+    path = tmp_path / "copiados.json"
+    h = copiados.ClipboardHistory(save_path=path)
+    h.add_text("guardado")
+    h.add_image(Image.new("RGB", (4, 4)))
+    again = copiados.ClipboardHistory(save_path=path)
+    assert [e.text for e in again.entries] == ["guardado"]  # imagens não vão pro disco
+    copiados.ClipboardHistory().add_text("só memória")
+    assert path.read_text(encoding="utf-8").count("só memória") == 0

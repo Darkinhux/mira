@@ -24,6 +24,7 @@ O que já vem pronto:
 | Steam ▸      | Abrir Steam, Biblioteca, Loja, Amigos, Downloads                            |
 | Discord      | —                                                                           |
 | Recortar     | Recorte de uma área da tela                                                 |
+| Copiados ▸   | **Histórico do Ctrl+C**: os últimos textos e imagens copiados — escolha um e ele é colado no programa aberto |
 | Tela inteira | Print de todas as telas                                                     |
 | Navegador ▸  | Google, YouTube, Twitch, WhatsApp, Gmail                                    |
 | Arquivos ▸   | Área de Trabalho, Downloads, Documentos, Imagens, Vídeos, Músicas, Prints, Disco C: — e dentro de cada uma, as pastas e arquivos que estão lá |
@@ -80,6 +81,43 @@ Aperte **PrtSc** (ou escolha **Recortar** na roda) e arraste para selecionar uma
 
 Para o PrtSc não abrir o recorte do Mira, use `"print_screen": false` no `config.json`.
 
+## Histórico do Ctrl+C (Copiados ▸)
+
+![Copiados](docs/copiados.png)
+
+O Mira guarda os últimos 25 textos e imagens que você copiou. Na camada **Copiados ▸**,
+escolha um e ele vai para a área de transferência **e já é colado** (Ctrl+V) no programa
+que está aberto. Links aparecem com 🔗, números com 🔢 e imagens em miniatura.
+**Limpar** apaga o histórico.
+
+- **Privacidade:** o histórico fica só na memória e some quando o Mira fecha. Senhas copiadas
+  de gerenciadores (Bitwarden, 1Password, KeePass…) **não** entram, porque eles marcam o
+  conteúdo como privado e o Mira respeita isso.
+- Para o histórico sobreviver a reinícios: `"clipboard_save": true` (só os textos são salvos,
+  em `copiados.json`). Para desligar tudo: `"clipboard_history": false`.
+
+## Perfil por programa
+
+A roda muda conforme o programa que está na frente. Já vem com dois perfis:
+
+- **Navegador** (Chrome, Edge, Brave, Firefox, Opera, Vivaldi): Nova aba, Reabrir aba,
+  Anônima, Recortar, Copiados, Downloads, Fechar aba e **Geral** (a roda normal).
+- **Valorant**: Recortar, Tela inteira, Discord, Mídia, Copiados e Geral.
+
+O nome do perfil aparece no centro e no canto (`MIRA.SYS @ NAVEGADOR`). Para criar o seu, use
+`profiles` no `config.json`. O `match` é o nome do `.exe` (aceita `*`), que você encontra no
+Gerenciador de Tarefas → Detalhes. Também dá para usar `title`, um pedaço do título da janela.
+
+```json
+"profiles": [
+  { "name": "Minecraft", "match": ["javaw.exe", "Minecraft*.exe"], "items": [
+      { "name": "Recortar", "icon": "✂️", "type": "snip" },
+      { "name": "Prints",   "icon": "📸", "type": "folder", "path": "%APPDATA%\\.minecraft\\screenshots" },
+      { "name": "Geral",    "icon": "🧭", "type": "default" }
+  ]}
+]
+```
+
 ## Personalizar os atalhos
 
 Clique com o botão direito no ícone perto do relógio → **Editar atalhos**, mude o
@@ -118,6 +156,8 @@ Um submenu é um item `menu` com os próprios `items` dentro (pode ter menu dent
 | `menu`       | Abre uma camada com mais itens                                         | `items`           |
 | `folder`     | Abre uma camada com as pastas e arquivos de uma pasta                  | `path`            |
 | `games`      | Abre uma camada com os jogos instalados                                | `sources` (`steam`, `epic`, `riot`) |
+| `clipboard`  | Abre o histórico do Ctrl+C                                             | —                 |
+| `default`    | Abre a roda normal (útil dentro de um perfil)                          | —                 |
 
 Qualquer item com `"stay": true` não fecha a roda depois de usado.
 
@@ -143,6 +183,10 @@ Outras opções do `config.json` (troque as cores para criar seu tema — ex.: `
 | `animations`        | `true`              | `false` desliga as animações (PC mais fraco)  |
 | `hover_open_ms`     | `450`               | Tempo parado em cima para abrir uma camada (`0` = só clicando) |
 | `print_screen`      | `true`              | A tecla PrtSc abre o recorte do Mira          |
+| `clipboard_history` | `true`              | Liga o histórico do Ctrl+C                    |
+| `clipboard_max`     | `25`                | Quantos itens o histórico guarda              |
+| `clipboard_save`    | `false`             | Salva os textos copiados em `copiados.json`   |
+| `profiles`          | Navegador, Valorant | Rodas por programa (veja acima)               |
 | `screenshot_folder` | `{pictures}/Mira`   | Onde os prints são salvos                     |
 
 ## Problemas comuns

@@ -156,3 +156,81 @@ def test_print_screen_opens_snipper(app, monkeypatch):
     img, action = got[0]
     assert action == "copy" and img.size == (300, 200)
     assert not app.wheel.visible
+
+
+# ---------------------------------------------------------------- Ctrl+C e perfis
+def _focus_tk_entry(app):
+    """Abre uma caixa de texto nossa e traz para a frente (truque do Alt do Windows)."""
+    import ctypes
+    win = tk.Toplevel(app.root)
+    win.geometry("400x80+200+200")
+    entry = tk.Entry(win, width=40)
+    entry.pack()
+    pump(app, 0.3)
+    u = ctypes.windll.user32
+    hwnd = int(win.wm_frame(), 16)
+    u.keybd_event(0x12, 0, 0, 0)          # Alt
+    u.SetForegroundWindow(hwnd)
+    u.keybd_event(0x12, 0, 2, 0)
+    entry.focus_force()
+    pump(app, 0.4)
+    return win, entry
+
+
+def test_clipboard_capture_and_private(app, mira):
+    import copiados
+    import ctypes
+    pump(app, 0.7)
+    assert copiados.write_text("olá do teste do Mira")
+    pump(app, 0.8)
+    assert app.clips.entries and app.clips.entries[0].text == "olá do teste do Mira"
+
+    # gerenciador de senhas: marca como privado -> não pode entrar no histórico
+    u, k = ctypes.windll.user32, ctypes.windll.kernel32
+    k.GlobalAlloc.restype = ctypes.c_void_p
+    k.GlobalLock.restype = ctypes.c_void_p
+    u.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    fmt = u.RegisterClipboardFormatW("ExcludeClipboardContentFromMonitorProcessing")
+    data = "senha-super-secreta\0".encode("utf-16-le")
+    h = k.GlobalAlloc(2, len(data))
+    ctypes.memmove(k.GlobalLock(ctypes.c_void_p(h)), data, len(data))
+    k.GlobalUnlock(ctypes.c_void_p(h))
+    marker = k.GlobalAlloc(2, 4)
+    assert u.OpenClipboard(None)
+    u.EmptyClipboard()
+    u.SetClipboardData(13, h)
+    u.SetClipboardData(fmt, marker)
+    u.CloseClipboard()
+    pump(app, 0.8)
+    assert all("senha" not in (e.text or "") for e in app.clips.entries)
+
+
+def test_paste_from_history_and_profile(app, mira):
+    win, entry = _focus_tk_entry(app)
+    try:
+        exe, _ = mira.foreground_app()
+        assert exe.startswith("python"), f"janela da frente: {exe!r}"
+
+        # perfil para o próprio python.exe: a roda tem que abrir com ele
+        app.cfg["profiles"].insert(0, {"name": "Teste", "match": ["python*.exe"], "title": [],
+                                       "items": [{"name": "A", "type": "keys", "keys": "a"},
+                                                 {"name": "Geral", "type": "default"}]})
+        app.wheel.rebuild()
+        app._open_wheel(500, 370)
+        pump(app, 0.2)
+        assert app.wheel.layer.title == "Teste"
+        app.activate(app.wheel.layer.items[1])  # Geral -> roda normal
+        assert app.wheel.layer.items == app.cfg["items"]
+        app._close_wheel()
+
+        # colar do histórico
+        app.clips.add_text("colado pelo Mira")
+        entry.focus_force()
+        pump(app, 0.2)
+        app.paste_clip(app.clips.entries[0])
+        pump(app, 0.6)
+        assert entry.get() == "colado pelo Mira"
+    finally:
+        app.cfg["profiles"].pop(0)
+        app.wheel.rebuild()
+        win.destroy()

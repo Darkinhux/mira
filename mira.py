@@ -11,6 +11,7 @@ Os atalhos ficam em config.json (ao lado deste arquivo).
 from __future__ import annotations
 
 import ctypes
+import fnmatch
 import io
 import json
 import logging
@@ -46,6 +47,7 @@ import threading  # noqa: E402
 from PIL import Image, ImageChops, ImageGrab, ImageTk  # noqa: E402
 from pynput import keyboard, mouse  # noqa: E402
 
+import copiados  # noqa: E402
 import jogos  # noqa: E402
 import neon  # noqa: E402
 import recorte  # noqa: E402
@@ -132,6 +134,42 @@ DEFAULT_CONFIG: dict = {
     ],
 }
 
+# "Copiados" (histórico do Ctrl+C) logo depois de "Recortar"
+DEFAULT_CONFIG["items"].insert(
+    [i["name"] for i in DEFAULT_CONFIG["items"]].index("Recortar") + 1,
+    {"name": "Copiados", "icon": "📋", "type": "clipboard"})
+DEFAULT_CONFIG.update({
+    "clipboard_history": True,
+    "clipboard_max": 25,
+    "clipboard_save": False,
+    # roda diferente conforme o programa que está na frente (nome do .exe)
+    "profiles": [
+        {"name": "Navegador",
+         "match": ["chrome.exe", "msedge.exe", "brave.exe", "firefox.exe", "opera.exe",
+                   "opera_gx.exe", "vivaldi.exe"],
+         "items": [
+             {"name": "Nova aba", "icon": "➕", "type": "keys", "keys": "ctrl+t"},
+             {"name": "Reabrir aba", "icon": "↩️", "type": "keys", "keys": "ctrl+shift+t"},
+             {"name": "Anônima", "icon": "🕶️", "type": "keys", "keys": "ctrl+shift+n"},
+             {"name": "Recortar", "icon": "✂️", "type": "snip"},
+             {"name": "Copiados", "icon": "📋", "type": "clipboard"},
+             {"name": "Downloads", "icon": "⬇️", "type": "keys", "keys": "ctrl+j"},
+             {"name": "Fechar aba", "icon": "✖️", "type": "keys", "keys": "ctrl+w"},
+             {"name": "Geral", "icon": "🧭", "type": "default"},
+         ]},
+        {"name": "Valorant",
+         "match": ["VALORANT-Win64-Shipping.exe"],
+         "items": [
+             {"name": "Recortar", "icon": "✂️", "type": "snip"},
+             {"name": "Tela inteira", "icon": "🖥️", "type": "screenshot"},
+             {"name": "Discord", "icon": "💬", "type": "open", "target": "discord://"},
+             next(i for i in DEFAULT_CONFIG["items"] if i["name"] == "Mídia"),
+             {"name": "Copiados", "icon": "📋", "type": "clipboard"},
+             {"name": "Geral", "icon": "🧭", "type": "default"},
+         ]},
+    ],
+})
+
 # trigger -> (tipo, número do XBUTTON)
 TRIGGERS = {
     "mouse4": ("x", 1),
@@ -160,6 +198,20 @@ def load_config() -> dict:
     if cfg["trigger"] not in TRIGGERS:
         raise ValueError(f"\"trigger\" deve ser um de: {', '.join(TRIGGERS)}")
     cfg["items"] = _check_items(cfg.get("items", []), "\"items\"", minimum=2)
+    profiles = []
+    for prof in cfg.get("profiles") or []:
+        if not isinstance(prof, dict) or not prof.get("name"):
+            continue
+        match = prof.get("match") or []
+        if isinstance(match, str):
+            match = [match]
+        prof["match"] = [str(m).lower() for m in match]
+        prof["title"] = [str(t).lower() for t in (prof.get("title") or [])]
+        if not prof["match"] and not prof["title"]:
+            raise ValueError(f"o perfil \"{prof['name']}\" precisa de \"match\" ou \"title\".")
+        prof["items"] = _check_items(prof.get("items", []), f"o perfil \"{prof['name']}\"")
+        profiles.append(prof)
+    cfg["profiles"] = profiles
     return cfg
 
 
@@ -295,6 +347,16 @@ if IS_WIN:
     _gdi32.GetDIBits.argtypes = [wintypes.HDC, wintypes.HBITMAP, wintypes.UINT, wintypes.UINT,
                                  ctypes.c_void_p, ctypes.POINTER(BITMAPINFO), wintypes.UINT]
 
+    _user32.GetForegroundWindow.restype = wintypes.HWND
+    _user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    _user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD,
+                                                     wintypes.LPWSTR,
+                                                     ctypes.POINTER(wintypes.DWORD)]
+    _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+
 GWL_EXSTYLE = -20
 WS_POPUP, WS_EX_TOPMOST = 0x80000000, 0x00000008
 WS_EX_LAYERED, WS_EX_TRANSPARENT = 0x00080000, 0x00000020
@@ -357,6 +419,40 @@ def update_layered(hwnd, img: Image.Image, x: int, y: int) -> None:
         _gdi32.DeleteObject(hbmp)
         _gdi32.DeleteDC(mem)
         _user32.ReleaseDC(None, screen)
+
+
+def foreground_app() -> tuple[str, str]:
+    """(nome do .exe em minúsculas, título) da janela que está na frente."""
+    if not IS_WIN:
+        return "", ""
+    hwnd = _user32.GetForegroundWindow()
+    if not hwnd:
+        return "", ""
+    title = ctypes.create_unicode_buffer(512)
+    _user32.GetWindowTextW(hwnd, title, 512)
+    pid = wintypes.DWORD()
+    _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    exe = ""
+    h = _kernel32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if h:
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(1024)
+            if _kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                exe = os.path.basename(buf.value).lower()
+        finally:
+            _kernel32.CloseHandle(h)
+    return exe, title.value
+
+
+def match_profile(profiles: list[dict], exe: str, title: str) -> dict | None:
+    title = title.lower()
+    for prof in profiles:
+        if exe and any(fnmatch.fnmatch(exe, pat) for pat in prof["match"]):
+            return prof
+        if title and any(t in title for t in prof["title"]):
+            return prof
+    return None
 
 
 def cursor_pos(root: tk.Misc) -> tuple[int, int]:
@@ -751,6 +847,16 @@ class Wheel:
         if self.visible:
             self.hide()
         self.root_layer = Layer(cfg, cfg["items"], "MIRA", ["MIRA.SYS"], 0)
+        self._profile_layers: dict = {}
+
+    def profile_layer(self, prof: dict | None) -> Layer:
+        if prof is None:
+            return self.root_layer
+        name = prof["name"]
+        if name not in self._profile_layers:
+            self._profile_layers[name] = Layer(self.app.cfg, prof["items"], name,
+                                               [f"MIRA.SYS @ {name}"], 0)
+        return self._profile_layers[name]
 
     @property
     def layer(self) -> Layer:
@@ -799,9 +905,9 @@ class Wheel:
             self.win.geometry(f"{self.size}x{self.size}+{self.origin[0]}+{self.origin[1]}")
 
     # --- exibir / esconder ---
-    def show_at(self, x: int, y: int) -> None:
+    def show_at(self, x: int, y: int, root: "Layer | None" = None) -> None:
         self.anchor = (x, y)
-        self.stack = [self.root_layer]
+        self.stack = [root or self.root_layer]
         self._place()
         self._render(0.0)  # se falhar, a roda não fica "meio aberta"
         self.visible = True
@@ -905,6 +1011,7 @@ class App:
         self.ignore_up = False
         self._swallow: set[int] = set()
         self.tray = None
+        self._init_clipboard()
         self._start_listeners()
         self._start_tray()
         self.root.after(10, self._poll)
@@ -1001,7 +1108,11 @@ class App:
         self.root.after(10, self._poll)
 
     def _open_wheel(self, x, y):
-        self.wheel.show_at(x, y)
+        prof = None
+        if self.cfg["profiles"]:
+            exe, title = foreground_app()
+            prof = match_profile(self.cfg["profiles"], exe, title)
+        self.wheel.show_at(x, y, self.wheel.profile_layer(prof))
         self.wheel_open = True
 
     def _close_wheel(self):
@@ -1055,6 +1166,55 @@ class App:
         elif ev == "quit":
             self.quit()
 
+    # --- histórico do Ctrl+C ---
+    def _init_clipboard(self):
+        save = BASE_DIR / "copiados.json" if self.cfg.get("clipboard_save") else None
+        self.clips = copiados.ClipboardHistory(self.cfg.get("clipboard_max", 25), save)
+        if self.cfg.get("clipboard_history", True) and not getattr(self, "_clip_polling", False):
+            self._clip_polling = True
+            self.root.after(500, self._poll_clipboard)
+
+    def _poll_clipboard(self):
+        if not self.cfg.get("clipboard_history", True):
+            self._clip_polling = False
+            return
+        self.clips.poll(self.root)
+        self.root.after(500, self._poll_clipboard)
+
+    def clip_items(self, offset: int) -> list[dict]:
+        size = int(self.cfg["icon_size"])
+
+        def convert(entry):
+            it = {"name": entry.label(), "icon": entry.icon(), "type": "paste", "_clip": entry}
+            if entry.kind == "image":
+                thumb = entry.image.copy()
+                thumb.thumbnail((size, size))
+                it["_icon_img"] = thumb.convert("RGBA")
+            return it
+
+        return paginate(
+            list(self.clips.entries), offset,
+            [{"name": "Limpar", "icon": "🧹", "type": "clip_clear"}], convert,
+            lambda nxt, left: {"name": f"Mais ({left})", "icon": "⏩", "type": "clipboard",
+                               "offset": nxt}) if self.clips.entries else []
+
+    def paste_clip(self, entry):
+        """Põe o item de volta na área de transferência e aperta Ctrl+V no app da frente."""
+        try:
+            ok = (copiados.write_text(entry.text) if entry.kind == "text"
+                  else copy_image_to_clipboard(entry.image))
+            if not ok and not IS_WIN and entry.kind == "text":
+                self.root.clipboard_clear()
+                self.root.clipboard_append(entry.text)
+                ok = True
+            if not ok:
+                raise OSError("a área de transferência está ocupada")
+            self.clips.use(entry)
+            self.root.after(60, lambda: send_keys("ctrl+v"))
+        except Exception as e:
+            log.exception("falha ao colar")
+            self.toast(f"Não deu para colar: {e}", error=True)
+
     def reload(self):
         try:
             self.cfg = load_config()
@@ -1062,16 +1222,37 @@ class App:
             self.toast(f"config.json inválido: {e}", error=True, ms=5000)
             return
         self.trigger = TRIGGERS[self.cfg["trigger"]]
+        old = self.clips.entries
+        self._init_clipboard()
+        self.clips.entries = old or self.clips.entries
         self.wheel.rebuild()
         self.toast(f"Atalhos recarregados ({len(self.cfg['items'])} itens)")
 
     def activate(self, item: dict):
         """Abre a subcamada do item ou executa a ação dele."""
         kind = item.get("type")
-        if kind in ("menu", "folder", "games"):
+        if kind == "paste":
+            self._close_wheel()
+            self.root.after(120, lambda: self.paste_clip(item["_clip"]))
+            return
+        if kind == "clip_clear":
+            self.clips.clear()
+            self._close_wheel()
+            self.toast("Histórico do Ctrl+C apagado")
+            return
+        if kind in ("menu", "folder", "games", "clipboard", "default"):
             try:
                 if kind == "menu":
                     self.wheel.push(item["items"], item["name"])
+                elif kind == "default":
+                    self.wheel.push(self.cfg["items"], item["name"])
+                elif kind == "clipboard":
+                    items = self.clip_items(int(item.get("offset", 0)))
+                    if not items:
+                        self.toast("Nada copiado ainda. Copie algo com Ctrl+C!")
+                        return
+                    title = item["name"] if not item.get("offset") else self.wheel.layer.title
+                    self.wheel.push(items, title)
                 elif kind == "games":
                     items = game_items(item, int(item.get("offset", 0)),
                                        int(self.cfg["icon_size"]))

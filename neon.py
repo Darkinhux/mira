@@ -117,7 +117,7 @@ def fit_font(kind, text, max_w, start, minimum=9):
 
 
 def is_branch(item: dict) -> bool:
-    return item.get("type") in ("menu", "folder", "games")
+    return item.get("type") in ("menu", "folder", "games", "clipboard", "default")
 
 
 def ellipsize(text: str, fnt, max_w: float) -> str:

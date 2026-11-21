@@ -71,6 +71,11 @@
       "type": "snip"
     },
     {
+      "name": "Copiados",
+      "icon": "📋",
+      "type": "clipboard"
+    },
+    {
       "name": "Tela inteira",
       "icon": "🖥️",
       "type": "screenshot"
@@ -256,6 +261,153 @@
           "icon": "✋",
           "type": "command",
           "command": "shutdown /a"
+        }
+      ]
+    }
+  ],
+  "clipboard_history": true,
+  "clipboard_max": 25,
+  "clipboard_save": false,
+  "profiles": [
+    {
+      "name": "Navegador",
+      "match": [
+        "chrome.exe",
+        "msedge.exe",
+        "brave.exe",
+        "firefox.exe",
+        "opera.exe",
+        "opera_gx.exe",
+        "vivaldi.exe"
+      ],
+      "items": [
+        {
+          "name": "Nova aba",
+          "icon": "➕",
+          "type": "keys",
+          "keys": "ctrl+t"
+        },
+        {
+          "name": "Reabrir aba",
+          "icon": "↩️",
+          "type": "keys",
+          "keys": "ctrl+shift+t"
+        },
+        {
+          "name": "Anônima",
+          "icon": "🕶️",
+          "type": "keys",
+          "keys": "ctrl+shift+n"
+        },
+        {
+          "name": "Recortar",
+          "icon": "✂️",
+          "type": "snip"
+        },
+        {
+          "name": "Copiados",
+          "icon": "📋",
+          "type": "clipboard"
+        },
+        {
+          "name": "Downloads",
+          "icon": "⬇️",
+          "type": "keys",
+          "keys": "ctrl+j"
+        },
+        {
+          "name": "Fechar aba",
+          "icon": "✖️",
+          "type": "keys",
+          "keys": "ctrl+w"
+        },
+        {
+          "name": "Geral",
+          "icon": "🧭",
+          "type": "default"
+        }
+      ]
+    },
+    {
+      "name": "Valorant",
+      "match": [
+        "VALORANT-Win64-Shipping.exe"
+      ],
+      "items": [
+        {
+          "name": "Recortar",
+          "icon": "✂️",
+          "type": "snip"
+        },
+        {
+          "name": "Tela inteira",
+          "icon": "🖥️",
+          "type": "screenshot"
+        },
+        {
+          "name": "Discord",
+          "icon": "💬",
+          "type": "open",
+          "target": "discord://"
+        },
+        {
+          "name": "Mídia",
+          "icon": "🎧",
+          "type": "menu",
+          "items": [
+            {
+              "name": "Play/Pause",
+              "icon": "⏯️",
+              "type": "keys",
+              "keys": "media_play_pause",
+              "stay": true
+            },
+            {
+              "name": "Próxima",
+              "icon": "⏭️",
+              "type": "keys",
+              "keys": "media_next",
+              "stay": true
+            },
+            {
+              "name": "Volume +",
+              "icon": "🔊",
+              "type": "keys",
+              "keys": "media_volume_up",
+              "stay": true
+            },
+            {
+              "name": "Mudo",
+              "icon": "🔇",
+              "type": "keys",
+              "keys": "media_volume_mute",
+              "stay": true
+            },
+            {
+              "name": "Volume -",
+              "icon": "🔉",
+              "type": "keys",
+              "keys": "media_volume_down",
+              "stay": true
+            },
+            {
+              "name": "Anterior",
+              "icon": "⏮️",
+              "type": "keys",
+              "keys": "media_previous",
+              "stay": true
+            }
+          ]
+        },
+        {
+          "name": "Copiados",
+          "icon": "📋",
+          "type": "clipboard"
+        },
+        {
+          "name": "Geral",
+          "icon": "🧭",
+          "type": "default"
         }
       ]
     }
